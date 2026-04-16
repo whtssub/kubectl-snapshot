@@ -8,6 +8,8 @@ import (
 )
 
 func newDiffCommand() *cobra.Command {
+	var maxItems int
+
 	cmd := &cobra.Command{
 		Use:   "diff <before.json> <after.json>",
 		Short: "Diff two snapshot bundles",
@@ -22,7 +24,9 @@ func newDiffCommand() *cobra.Command {
 				return fmt.Errorf("read after bundle: %w", err)
 			}
 
-			report, err := snapshot.Diff(before, after)
+			report, err := snapshot.DiffWithOptions(before, after, snapshot.DiffOptions{
+				MaxItems: maxItems,
+			})
 			if err != nil {
 				return err
 			}
@@ -30,5 +34,6 @@ func newDiffCommand() *cobra.Command {
 			return nil
 		},
 	}
+	cmd.Flags().IntVar(&maxItems, "max-items", 15, "Maximum entries shown per section")
 	return cmd
 }

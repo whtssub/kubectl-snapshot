@@ -8,7 +8,22 @@ import (
 	"strings"
 )
 
+const defaultMaxSectionEntries = 15
+
+type DiffOptions struct {
+	MaxItems int
+}
+
 func Diff(before, after *Bundle) (string, error) {
+	return DiffWithOptions(before, after, DiffOptions{})
+}
+
+func DiffWithOptions(before, after *Bundle, opts DiffOptions) (string, error) {
+	maxItems := opts.MaxItems
+	if maxItems <= 0 {
+		maxItems = defaultMaxSectionEntries
+	}
+
 	beforeMap, err := recordHashMap(before)
 	if err != nil {
 		return "", fmt.Errorf("index before bundle: %w", err)
@@ -44,30 +59,59 @@ func Diff(before, after *Bundle) (string, error) {
 
 	var sb strings.Builder
 	sb.WriteString("Snapshot Diff Report\n")
-	sb.WriteString("====================\n")
-	sb.WriteString(fmt.Sprintf("Added:   %d\n", len(added)))
-	sb.WriteString(fmt.Sprintf("Removed: %d\n", len(removed)))
-	sb.WriteString(fmt.Sprintf("Changed: %d\n\n", len(changed)))
+	sb.WriteString("--------------------\n")
+	sb.WriteString(fmt.Sprintf("Before records: %d\n", len(before.Records)))
+	sb.WriteString(fmt.Sprintf("After records:  %d\n", len(after.Records)))
+	sb.WriteString(fmt.Sprintf("Added:          %d\n", len(added)))
+	sb.WriteString(fmt.Sprintf("Removed:        %d\n", len(removed)))
+	sb.WriteString(fmt.Sprintf("Changed:        %d\n", len(changed)))
+	sb.WriteString(fmt.Sprintf("Net delta:      %+d\n\n", len(after.Records)-len(before.Records)))
 
-	writeSection(&sb, "ADDED", added)
-	writeSection(&sb, "REMOVED", removed)
-	writeSection(&sb, "CHANGED", changed)
+	writeSection(&sb, "ADDED RESOURCES", added, maxItems)
+	writeSection(&sb, "REMOVED RESOURCES", removed, maxItems)
+	writeSection(&sb, "CHANGED RESOURCES", changed, maxItems)
 	return sb.String(), nil
 }
 
-func writeSection(sb *strings.Builder, title string, entries []string) {
+func writeSection(sb *strings.Builder, title string, entries []string, maxItems int) {
+	sb.WriteString("## ")
 	sb.WriteString(title)
-	sb.WriteString(":\n")
+	sb.WriteString("\n")
 	if len(entries) == 0 {
-		sb.WriteString("  (none)\n\n")
+		sb.WriteString("- none\n\n")
 		return
 	}
-	for _, e := range entries {
-		sb.WriteString("  - ")
-		sb.WriteString(e)
+	limit := minInt(len(entries), maxItems)
+	for _, e := range entries[:limit] {
+		sb.WriteString("- ")
+		sb.WriteString(humanizeRecordKey(e))
 		sb.WriteByte('\n')
 	}
+	if len(entries) > limit {
+		sb.WriteString(fmt.Sprintf("- ... %d more\n", len(entries)-limit))
+	}
 	sb.WriteByte('\n')
+}
+
+func humanizeRecordKey(key string) string {
+	parts := strings.Split(key, "/")
+	if len(parts) != 3 {
+		return key
+	}
+	resource := parts[0]
+	namespace := parts[1]
+	name := parts[2]
+	if namespace == "_cluster" {
+		return fmt.Sprintf("%s %s", resource, name)
+	}
+	return fmt.Sprintf("%s %s/%s", resource, namespace, name)
+}
+
+func minInt(a, b int) int {
+	if a < b {
+		return a
+	}
+	return b
 }
 
 func recordHashMap(bundle *Bundle) (map[string]string, error) {

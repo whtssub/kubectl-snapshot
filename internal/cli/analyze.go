@@ -8,6 +8,11 @@ import (
 )
 
 func newAnalyzeCommand() *cobra.Command {
+	var maxItems int
+	var minSeverity string
+	var hideResourceMix bool
+	var hideWarningEvents bool
+
 	cmd := &cobra.Command{
 		Use:   "analyze <snapshot.json>",
 		Short: "Analyze a snapshot for incident signals",
@@ -18,7 +23,12 @@ func newAnalyzeCommand() *cobra.Command {
 				return fmt.Errorf("read snapshot bundle: %w", err)
 			}
 
-			report, err := snapshot.Analyze(bundle)
+			report, err := snapshot.AnalyzeWithOptions(bundle, snapshot.AnalyzeOptions{
+				MaxItems:          maxItems,
+				MinSeverity:       minSeverity,
+				HideResourceMix:   hideResourceMix,
+				HideWarningEvents: hideWarningEvents,
+			})
 			if err != nil {
 				return err
 			}
@@ -26,5 +36,9 @@ func newAnalyzeCommand() *cobra.Command {
 			return nil
 		},
 	}
+	cmd.Flags().IntVar(&maxItems, "max-items", 15, "Maximum entries shown per section")
+	cmd.Flags().StringVar(&minSeverity, "severity-threshold", "", "Only print details when severity is at least: low|medium|high")
+	cmd.Flags().BoolVar(&hideResourceMix, "no-resource-mix", false, "Hide resource mix section")
+	cmd.Flags().BoolVar(&hideWarningEvents, "no-warning-events", false, "Hide warning events section")
 	return cmd
 }
