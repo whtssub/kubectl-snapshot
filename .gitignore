@@ -1,0 +1,20 @@
+# Binaries
+kubectl-snapshot
+bin/
+dist/
+
+# Go build/test artifacts
+*.test
+*.out
+coverage.out
+
+# Local Go caches used in this repo
+.gocache/
+.gomodcache/
+
+# Snapshot outputs
+snapshots/
+*.snapshot.json
+
+# OS/editor noise
+.DS_Store
