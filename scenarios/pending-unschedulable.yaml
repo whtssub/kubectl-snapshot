@@ -1,0 +1,16 @@
+apiVersion: v1
+kind: Pod
+metadata:
+  name: pending-unschedulable-demo
+  namespace: sre-lab
+  labels:
+    app: pending-unschedulable-demo
+spec:
+  containers:
+    - name: sleeper
+      image: busybox:1.36
+      command: ["/bin/sh", "-c", "sleep 3600"]
+      resources:
+        requests:
+          cpu: "16"
+          memory: "16Gi"

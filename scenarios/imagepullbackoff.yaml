@@ -1,0 +1,12 @@
+apiVersion: v1
+kind: Pod
+metadata:
+  name: imagepullbackoff-demo
+  namespace: sre-lab
+  labels:
+    app: imagepullbackoff-demo
+spec:
+  containers:
+    - name: bad-image
+      image: registry.invalid.local/does-not-exist:latest
+      imagePullPolicy: Always

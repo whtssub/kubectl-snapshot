@@ -1,0 +1,30 @@
+apiVersion: v1
+kind: Pod
+metadata:
+  name: diskpressure-best-effort
+  namespace: sre-lab
+  labels:
+    app: diskpressure-best-effort
+spec:
+  restartPolicy: Never
+  containers:
+    - name: disk-filler
+      image: busybox:1.36
+      command:
+        - /bin/sh
+        - -c
+        - |
+          set -eux
+          mkdir -p /data
+          i=0
+          while [ "$i" -lt 400 ]; do
+            dd if=/dev/zero of=/data/blob-$i bs=5M count=1 conv=fsync
+            i=$((i+1))
+          done
+          sleep 120
+      volumeMounts:
+        - name: pressure
+          mountPath: /data
+  volumes:
+    - name: pressure
+      emptyDir: {}
