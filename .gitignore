@@ -4,7 +4,6 @@ bin/
 dist/
 
 # Go build/test artifacts
-*.test
 *.out
 coverage.out
 
@@ -19,5 +18,11 @@ snapshots/
 # OS/editor noise
 .DS_Store
 
-# Temporary docs exclusion
-README.md
+# Environment variables
+.env
+
+# Local tooling
+/.claude
+graphify-out/
+CLAUDE.md
+TODO.md
