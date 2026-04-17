@@ -11,6 +11,8 @@ type analysis struct {
 	podIssues          []string
 	nodeIssues         []string
 	warningEvents      []string
+	workloadIssues     []string
+	storageIssues      []string
 	totalRestarts      int
 	unknownEventLevels int
 	resourceCounts     map[string]int
@@ -34,9 +36,11 @@ func AnalyzeWithOptions(bundle *Bundle, opts AnalyzeOptions) (string, error) {
 	}
 
 	a := &analysis{
-		podIssues:     make([]string, 0),
-		nodeIssues:    make([]string, 0),
-		warningEvents: make([]string, 0),
+		podIssues:      make([]string, 0),
+		nodeIssues:     make([]string, 0),
+		warningEvents:  make([]string, 0),
+		workloadIssues: make([]string, 0),
+		storageIssues:  make([]string, 0),
 		resourceCounts: make(map[string]int),
 	}
 
@@ -53,12 +57,26 @@ func AnalyzeWithOptions(bundle *Bundle, opts AnalyzeOptions) (string, error) {
 			a.inspectNode(r, obj)
 		case "events":
 			a.inspectEvent(r, obj)
+		case "deployments":
+			a.inspectDeployment(r, obj)
+		case "statefulsets":
+			a.inspectStatefulSet(r, obj)
+		case "daemonsets":
+			a.inspectDaemonSet(r, obj)
+		case "persistentvolumeclaims":
+			a.inspectPVC(r, obj)
+		case "persistentvolumes":
+			a.inspectPV(r, obj)
+		case "horizontalpodautoscalers":
+			a.inspectHPA(r, obj)
 		}
 	}
 
 	sort.Strings(a.podIssues)
 	sort.Strings(a.nodeIssues)
 	sort.Strings(a.warningEvents)
+	sort.Strings(a.workloadIssues)
+	sort.Strings(a.storageIssues)
 
 	var sb strings.Builder
 	sb.WriteString("Snapshot Incident Analysis\n")
@@ -70,7 +88,10 @@ func AnalyzeWithOptions(bundle *Bundle, opts AnalyzeOptions) (string, error) {
 	sb.WriteString(fmt.Sprintf("Warning events:     %d\n", len(a.warningEvents)))
 	sb.WriteString(fmt.Sprintf("Non-normal events:  %d\n\n", a.unknownEventLevels))
 
-	score, severity := computeIncidentScoreAndSeverity(len(a.podIssues), len(a.nodeIssues), len(a.warningEvents), a.totalRestarts)
+	score, severity := computeIncidentScoreAndSeverity(
+		len(a.podIssues), len(a.nodeIssues), len(a.warningEvents),
+		a.totalRestarts, len(a.workloadIssues), len(a.storageIssues),
+	)
 	if belowSeverityThreshold(severity, opts.MinSeverity) {
 		sb.WriteString("Result: below configured severity threshold\n")
 		sb.WriteString(fmt.Sprintf("- current severity: %s\n", severity))
@@ -84,14 +105,16 @@ func AnalyzeWithOptions(bundle *Bundle, opts AnalyzeOptions) (string, error) {
 	}
 	writeSection(&sb, "POD ISSUES", a.podIssues, maxItems)
 	writeSection(&sb, "NODE ISSUES", a.nodeIssues, maxItems)
+	writeSection(&sb, "WORKLOAD ISSUES", a.workloadIssues, maxItems)
+	writeSection(&sb, "STORAGE ISSUES", a.storageIssues, maxItems)
 	if !opts.HideWarningEvents {
 		writeSection(&sb, "WARNING EVENTS", a.warningEvents, maxItems)
 	}
 	return sb.String(), nil
 }
 
-func computeIncidentScoreAndSeverity(podIssues, nodeIssues, warnings, restarts int) (int, string) {
-	score := podIssues*3 + nodeIssues*4 + warnings + restarts
+func computeIncidentScoreAndSeverity(podIssues, nodeIssues, warnings, restarts, workloadIssues, storageIssues int) (int, string) {
+	score := podIssues*3 + nodeIssues*4 + warnings + restarts + workloadIssues*3 + storageIssues*2
 	severity := "LOW"
 	switch {
 	case score >= 40:
@@ -105,7 +128,7 @@ func computeIncidentScoreAndSeverity(podIssues, nodeIssues, warnings, restarts i
 func writeIncidentScore(sb *strings.Builder, score int, severity string) {
 	sb.WriteString("## INCIDENT SCORE\n")
 	sb.WriteString(fmt.Sprintf("- severity: %s\n", severity))
-	sb.WriteString(fmt.Sprintf("- score: %d (pods*3 + nodes*4 + warnings + restarts)\n\n", score))
+	sb.WriteString(fmt.Sprintf("- score: %d (pods*3 + nodes*4 + workloads*3 + storage*2 + warnings + restarts)\n\n", score))
 }
 
 func writeResourceMix(sb *strings.Builder, counts map[string]int) {
@@ -167,15 +190,26 @@ func (a *analysis) inspectPod(r Record, obj map[string]any) {
 		name := getString(container, "name")
 		restarts := getInt(container, "restartCount")
 		a.totalRestarts += restarts
+
 		state := getMap(container, "state")
 		waiting := getMap(state, "waiting")
 		if len(waiting) > 0 {
 			reason := getString(waiting, "reason")
 			msg := trim(getString(waiting, "message"), 100)
-			if reason != "" {
+			if reason == "CrashLoopBackOff" {
+				a.podIssues = append(a.podIssues, fmt.Sprintf("[CRASHLOOP] %s container=%s msg=%q", nsName, name, msg))
+			} else if reason != "" {
 				a.podIssues = append(a.podIssues, fmt.Sprintf("%s container=%s waiting=%s msg=%q", nsName, name, reason, msg))
 			}
 		}
+
+		// Check last terminated state for OOMKill
+		lastState := getMap(container, "lastState")
+		terminated := getMap(lastState, "terminated")
+		if getString(terminated, "reason") == "OOMKilled" {
+			a.podIssues = append(a.podIssues, fmt.Sprintf("[OOMKILLED] %s container=%s", nsName, name))
+		}
+
 		if restarts > 0 {
 			a.podIssues = append(a.podIssues, fmt.Sprintf("%s container=%s restarts=%d", nsName, name, restarts))
 		}
@@ -222,6 +256,107 @@ func (a *analysis) inspectEvent(r Record, obj map[string]any) {
 	}
 	if eventType != "NORMAL" {
 		a.unknownEventLevels++
+	}
+}
+
+func (a *analysis) inspectDeployment(r Record, obj map[string]any) {
+	nsName := namespacedName(r.Namespace, r.Name)
+	status := getMap(obj, "status")
+	spec := getMap(obj, "spec")
+
+	// Zero available replicas when some are desired
+	specReplicas := getInt(spec, "replicas")
+	availableReplicas := getInt(status, "availableReplicas")
+	if specReplicas > 0 && availableReplicas == 0 {
+		a.workloadIssues = append(a.workloadIssues,
+			fmt.Sprintf("[DEPLOY] %s zero-available-replicas desired=%d", nsName, specReplicas))
+	}
+
+	for _, c := range getSlice(status, "conditions") {
+		cm, ok := c.(map[string]any)
+		if !ok {
+			continue
+		}
+		condType := getString(cm, "type")
+		condStatus := getString(cm, "status")
+		reason := getString(cm, "reason")
+
+		if condType == "Available" && condStatus == "False" {
+			a.workloadIssues = append(a.workloadIssues,
+				fmt.Sprintf("[DEPLOY] %s unavailable reason=%s", nsName, reason))
+		}
+		if condType == "Progressing" && reason == "ProgressDeadlineExceeded" {
+			a.workloadIssues = append(a.workloadIssues,
+				fmt.Sprintf("[DEPLOY] %s rollout-failed reason=%s", nsName, reason))
+		}
+	}
+}
+
+func (a *analysis) inspectStatefulSet(r Record, obj map[string]any) {
+	nsName := namespacedName(r.Namespace, r.Name)
+	status := getMap(obj, "status")
+	spec := getMap(obj, "spec")
+
+	desired := getInt(spec, "replicas")
+	ready := getInt(status, "readyReplicas")
+	if desired > 0 && ready < desired {
+		a.workloadIssues = append(a.workloadIssues,
+			fmt.Sprintf("[STS] %s ready=%d desired=%d", nsName, ready, desired))
+	}
+}
+
+func (a *analysis) inspectDaemonSet(r Record, obj map[string]any) {
+	nsName := namespacedName(r.Namespace, r.Name)
+	status := getMap(obj, "status")
+
+	desired := getInt(status, "desiredNumberScheduled")
+	ready := getInt(status, "numberReady")
+	if desired > 0 && ready < desired {
+		a.workloadIssues = append(a.workloadIssues,
+			fmt.Sprintf("[DS] %s ready=%d desired=%d", nsName, ready, desired))
+	}
+}
+
+func (a *analysis) inspectPVC(r Record, obj map[string]any) {
+	nsName := namespacedName(r.Namespace, r.Name)
+	status := getMap(obj, "status")
+	phase := getString(status, "phase")
+	if phase != "" && phase != "Bound" {
+		a.storageIssues = append(a.storageIssues,
+			fmt.Sprintf("[PVC] %s phase=%s", nsName, phase))
+	}
+}
+
+func (a *analysis) inspectPV(r Record, obj map[string]any) {
+	status := getMap(obj, "status")
+	phase := getString(status, "phase")
+	if phase == "Failed" || phase == "Released" {
+		a.storageIssues = append(a.storageIssues,
+			fmt.Sprintf("[PV] %s phase=%s", r.Name, phase))
+	}
+}
+
+func (a *analysis) inspectHPA(r Record, obj map[string]any) {
+	nsName := namespacedName(r.Namespace, r.Name)
+	status := getMap(obj, "status")
+	spec := getMap(obj, "spec")
+
+	currentReplicas := getInt(status, "currentReplicas")
+	maxReplicas := getInt(spec, "maxReplicas")
+	if maxReplicas > 0 && currentReplicas >= maxReplicas {
+		a.workloadIssues = append(a.workloadIssues,
+			fmt.Sprintf("[HPA] %s at-max-replicas current=%d max=%d", nsName, currentReplicas, maxReplicas))
+	}
+
+	for _, c := range getSlice(status, "conditions") {
+		cm, ok := c.(map[string]any)
+		if !ok {
+			continue
+		}
+		if getString(cm, "type") == "AbleToScale" && getString(cm, "status") == "False" {
+			a.workloadIssues = append(a.workloadIssues,
+				fmt.Sprintf("[HPA] %s scale-blocked reason=%s", nsName, getString(cm, "reason")))
+		}
 	}
 }
 
