@@ -1,4 +1,4 @@
-module github.com/subhasmita/kubectl-snapshot
+module github.com/whtssub/kubectl-snapshot
 
 go 1.22.0
 
