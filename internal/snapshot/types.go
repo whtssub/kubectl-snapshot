@@ -3,9 +3,11 @@ package snapshot
 import "time"
 
 type Metadata struct {
-	ToolVersion string    `json:"toolVersion"`
-	CapturedAt  time.Time `json:"capturedAt"`
-	ClusterHint string    `json:"clusterHint,omitempty"`
+	ToolVersion       string    `json:"toolVersion"`
+	CapturedAt        time.Time `json:"capturedAt"`
+	ClusterHint       string    `json:"clusterHint,omitempty"`
+	CapturedResources []string  `json:"capturedResources,omitempty"`
+	SkippedResources  []string  `json:"skippedResources,omitempty"`
 }
 
 type Record struct {
