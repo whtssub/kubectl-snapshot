@@ -1,0 +1,65 @@
+version: 2
+
+builds:
+  - id: kubectl-snapshot
+    main: ./cmd/kubectl-snapshot
+    binary: kubectl-snapshot
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - linux
+      - darwin
+      - windows
+    goarch:
+      - amd64
+      - arm64
+    ldflags:
+      - -s -w
+      - -X main.version={{.Version}}
+      - -X main.commit={{.Commit}}
+      - -X main.date={{.Date}}
+
+archives:
+  - id: default
+    formats: [tar.gz]
+    name_template: "kubectl-snapshot_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+    format_overrides:
+      - goos: windows
+        formats: [zip]
+    files:
+      - LICENSE
+      - README.md
+
+checksum:
+  name_template: "checksums.txt"
+
+changelog:
+  sort: asc
+  filters:
+    exclude:
+      - "^docs:"
+      - "^test:"
+      - "^ci:"
+      - Merge pull request
+      - Merge branch
+
+release:
+  draft: false
+  prerelease: auto
+  name_template: "{{ .Tag }}"
+
+krews:
+  - name: snapshot
+    repository:
+      owner: whtssub
+      name: krew-index
+    commit_author:
+      name: whtssub
+      email: chikki81166@gmail.com
+    homepage: https://github.com/whtssub/kubectl-snapshot
+    description: |
+      Capture point-in-time snapshots of Kubernetes cluster state and diff
+      them for post-incident analysis. Detects pod failures, node pressure,
+      deployment rollout issues, storage problems, and HPA ceiling hits.
+    short_description: Capture and diff K8s cluster snapshots for incident review
+    skip_upload: auto
