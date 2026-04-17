@@ -4,7 +4,7 @@ import (
 	"fmt"
 
 	"github.com/spf13/cobra"
-	"github.com/subhasmita/kubectl-snapshot/internal/snapshot"
+	"github.com/whtssub/kubectl-snapshot/internal/snapshot"
 )
 
 func newDiffCommand() *cobra.Command {

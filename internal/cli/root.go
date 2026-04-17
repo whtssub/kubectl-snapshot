@@ -1,10 +1,12 @@
 package cli
 
 import (
+	"fmt"
+
 	"github.com/spf13/cobra"
 )
 
-func NewRootCommand() *cobra.Command {
+func NewRootCommand(version, commit, date string) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "kubectl-snapshot",
 		Short: "Capture and diff Kubernetes cluster snapshots",
@@ -14,5 +16,16 @@ func NewRootCommand() *cobra.Command {
 	cmd.AddCommand(newCaptureCommand())
 	cmd.AddCommand(newDiffCommand())
 	cmd.AddCommand(newAnalyzeCommand())
+	cmd.AddCommand(newVersionCommand(version, commit, date))
 	return cmd
+}
+
+func newVersionCommand(version, commit, date string) *cobra.Command {
+	return &cobra.Command{
+		Use:   "version",
+		Short: "Print version information",
+		Run: func(cmd *cobra.Command, args []string) {
+			fmt.Fprintf(cmd.OutOrStdout(), "kubectl-snapshot %s (commit: %s, built: %s)\n", version, commit, date)
+		},
+	}
 }
