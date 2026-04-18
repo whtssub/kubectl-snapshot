@@ -210,6 +210,29 @@ func TestAnalyze_TotalRestarts_Counted(t *testing.T) {
 	}
 }
 
+func TestAnalyze_JobPod_NotReported(t *testing.T) {
+	pod := makePodRecord("default", "batch-abc", map[string]any{
+		"metadata": map[string]any{
+			"ownerReferences": []any{
+				map[string]any{"kind": "Job", "name": "batch-job"},
+			},
+		},
+		"status": map[string]any{
+			"phase": "Failed",
+			"containerStatuses": []any{
+				map[string]any{"name": "worker", "restartCount": float64(5), "state": map[string]any{}},
+			},
+		},
+	})
+	out, err := Analyze(bundleFromRecords([]Record{pod}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(out, "batch-abc") {
+		t.Error("Job-owned pod should not appear in any issue section")
+	}
+}
+
 // --- Node analysis ---
 
 func TestAnalyze_MemoryPressureNode_Detected(t *testing.T) {

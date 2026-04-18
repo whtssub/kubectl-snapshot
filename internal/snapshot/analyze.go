@@ -158,6 +158,9 @@ func writeResourceMix(sb *strings.Builder, counts map[string]int) {
 }
 
 func (a *analysis) inspectPod(r Record, obj map[string]any) {
+	if isJobPod(obj) {
+		return
+	}
 	status := getMap(obj, "status")
 	if len(status) == 0 {
 		return
@@ -466,4 +469,15 @@ func severityRank(s string) int {
 	default:
 		return -1
 	}
+}
+
+func isJobPod(obj map[string]any) bool {
+	metadata := getMap(obj, "metadata")
+	for _, ref := range getSlice(metadata, "ownerReferences") {
+		refMap, ok := ref.(map[string]any)
+		if ok && getString(refMap, "kind") == "Job" {
+			return true
+		}
+	}
+	return false
 }
