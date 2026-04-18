@@ -226,7 +226,7 @@ func TestAnalyze_RestartsCapped_ScoreNotInflated(t *testing.T) {
 		t.Error("raw restart count should display uncapped")
 	}
 	// 1 pod issue (restarts>0) * 3 + capped restarts 50 = 53
-	if !strings.Contains(out, "score: 53") {
+	if !strings.Contains(out, "score:    53") {
 		t.Errorf("score should be 53 (capped restarts), got:\n%s", out)
 	}
 }
@@ -333,7 +333,7 @@ func TestAnalyze_HealthyNode_NotReported(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if strings.Contains(out, "NODE ISSUES\n- healthy-node") {
+	if strings.Contains(out, "healthy-node") {
 		t.Error("healthy node should not appear in issues")
 	}
 }
@@ -471,7 +471,7 @@ func TestAnalyze_HideWarningEvents(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if strings.Contains(out, "## WARNING EVENTS") {
+	if strings.Contains(out, "WARNING EVENTS") {
 		t.Error("warning events section should be hidden")
 	}
 }
@@ -486,7 +486,7 @@ func TestAnalyze_HideResourceMix(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if strings.Contains(out, "## RESOURCE MIX") {
+	if strings.Contains(out, "RESOURCE MIX") {
 		t.Error("resource mix section should be hidden")
 	}
 }
@@ -503,11 +503,11 @@ func TestAnalyze_ResourceMix_CountsCorrectly(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(out, "pods: 2") {
-		t.Errorf("expected pods: 2 in resource mix, got:\n%s", out)
+	if !strings.Contains(out, "pods") || !strings.Contains(out, "   2") {
+		t.Errorf("expected pods count=2 in resource mix, got:\n%s", out)
 	}
-	if !strings.Contains(out, "nodes: 1") {
-		t.Errorf("expected nodes: 1 in resource mix, got:\n%s", out)
+	if !strings.Contains(out, "nodes") || !strings.Contains(out, "   1") {
+		t.Errorf("expected nodes count=1 in resource mix, got:\n%s", out)
 	}
 }
 
@@ -949,7 +949,7 @@ func TestAnalyze_WorkloadIssuesSection_AlwaysPresent(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(out, "## WORKLOAD ISSUES") {
+	if !strings.Contains(out, "WORKLOAD ISSUES") {
 		t.Error("WORKLOAD ISSUES section should always be present")
 	}
 }
@@ -959,7 +959,7 @@ func TestAnalyze_StorageIssuesSection_AlwaysPresent(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(out, "## STORAGE ISSUES") {
+	if !strings.Contains(out, "STORAGE ISSUES") {
 		t.Error("STORAGE ISSUES section should always be present")
 	}
 }

@@ -81,8 +81,10 @@ func AnalyzeWithOptions(bundle *Bundle, opts AnalyzeOptions) (string, error) {
 	sort.Strings(a.storageIssues)
 
 	var sb strings.Builder
-	sb.WriteString("Snapshot Incident Analysis\n")
-	sb.WriteString("-------------------------\n")
+	sb.WriteString(clr(ansiBold, "📸 Snapshot Incident Analysis"))
+	sb.WriteByte('\n')
+	sb.WriteString(clr(ansiDim, "═════════════════════════════════"))
+	sb.WriteByte('\n')
 	sb.WriteString(fmt.Sprintf("Captured at:        %s\n", bundle.Metadata.CapturedAt.Format("2006-01-02 15:04:05 MST")))
 	sb.WriteString(fmt.Sprintf("Cluster context:    %s\n", defaultIfEmpty(bundle.Metadata.ClusterHint, "(unknown)")))
 	sb.WriteString(fmt.Sprintf("Total records:      %d\n", len(bundle.Records)))
@@ -140,9 +142,12 @@ func computeIncidentScoreAndSeverity(podIssues, nodeIssues, warnings, restarts, 
 }
 
 func writeIncidentScore(sb *strings.Builder, score int, severity string) {
-	sb.WriteString("## INCIDENT SCORE\n")
+	sb.WriteString(clr(ansiBold, "⚠️ INCIDENT SCORE"))
+	sb.WriteByte('\n')
 	sb.WriteString(fmt.Sprintf("- severity: %s\n", colorizedSeverity(severity)))
-	sb.WriteString(fmt.Sprintf("- score: %d (pods*3 + nodes*4 + workloads*3 + storage*2 + warnings + restarts, capped at 50)\n\n", score))
+	sb.WriteString(fmt.Sprintf("- score:    %d\n", score))
+	sb.WriteString("- formula:  pods×3 + nodes×4 + workloads×3 + storage×2 + warnings + restarts (cap 50)\n")
+	sb.WriteString("- thresholds: LOW <15 · MEDIUM 15–39 · HIGH ≥40\n\n")
 }
 
 func writeResourceMix(sb *strings.Builder, counts map[string]int) {
@@ -164,9 +169,10 @@ func writeResourceMix(sb *strings.Builder, counts map[string]int) {
 		return items[i].key < items[j].key
 	})
 
-	sb.WriteString("## RESOURCE MIX\n")
+	sb.WriteString(clr(ansiBold, "📦 RESOURCE MIX"))
+	sb.WriteByte('\n')
 	for _, item := range items {
-		sb.WriteString(fmt.Sprintf("- %s: %d\n", item.key, item.val))
+		sb.WriteString(fmt.Sprintf("  %-25s %4d\n", item.key, item.val))
 	}
 	sb.WriteByte('\n')
 }

@@ -73,22 +73,38 @@ func DiffWithOptions(before, after *Bundle, opts DiffOptions) (string, error) {
 	return sb.String(), nil
 }
 
+func sectionIcon(title string) string {
+	switch {
+	case strings.Contains(title, "POD"):
+		return "🐳 "
+	case strings.Contains(title, "NODE"):
+		return "🖥️  "
+	case strings.Contains(title, "WORKLOAD"):
+		return "⚙️  "
+	case strings.Contains(title, "STORAGE"):
+		return "💾 "
+	case strings.Contains(title, "WARNING"):
+		return "⚠️  "
+	default:
+		return "📋 "
+	}
+}
+
 func writeSection(sb *strings.Builder, title string, entries []string, maxItems int) {
-	sb.WriteString("## ")
-	sb.WriteString(title)
-	sb.WriteString("\n")
+	sb.WriteString(clr(ansiBold, sectionIcon(title)+title))
+	sb.WriteByte('\n')
+	sb.WriteString(clr(ansiDim, "─────────────────────────────────"))
+	sb.WriteByte('\n')
 	if len(entries) == 0 {
-		sb.WriteString("- none\n\n")
+		sb.WriteString("  ✓ none\n\n")
 		return
 	}
 	limit := minInt(len(entries), maxItems)
-	for _, e := range entries[:limit] {
-		sb.WriteString("- ")
-		sb.WriteString(humanizeRecordKey(e))
-		sb.WriteByte('\n')
+	for i, e := range entries[:limit] {
+		sb.WriteString(fmt.Sprintf("  %2d. %s\n", i+1, humanizeRecordKey(e)))
 	}
 	if len(entries) > limit {
-		sb.WriteString(fmt.Sprintf("- ... %d more\n", len(entries)-limit))
+		sb.WriteString(fmt.Sprintf("  ... and %d more\n", len(entries)-limit))
 	}
 	sb.WriteByte('\n')
 }

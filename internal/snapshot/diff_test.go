@@ -151,8 +151,8 @@ func TestDiff_MaxItemsLimitsOutput(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if !strings.Contains(out, "... 15 more") {
-		t.Errorf("expected '... 15 more' truncation, got:\n%s", out)
+	if !strings.Contains(out, "... and 15 more") {
+		t.Errorf("expected '... and 15 more' truncation, got:\n%s", out)
 	}
 }
 
@@ -233,11 +233,11 @@ func TestWriteSection_Empty(t *testing.T) {
 	var sb strings.Builder
 	writeSection(&sb, "TEST", []string{}, 10)
 	out := sb.String()
-	if !strings.Contains(out, "## TEST") {
+	if !strings.Contains(out, "TEST") {
 		t.Error("expected section header")
 	}
-	if !strings.Contains(out, "- none") {
-		t.Error("expected '- none' for empty section")
+	if !strings.Contains(out, "✓ none") {
+		t.Error("expected '✓ none' for empty section")
 	}
 }
 
@@ -255,7 +255,7 @@ func TestWriteSection_TruncatesAtMaxItems(t *testing.T) {
 	var sb strings.Builder
 	writeSection(&sb, "TEST", items, 3)
 	out := sb.String()
-	if !strings.Contains(out, "... 2 more") {
+	if !strings.Contains(out, "... and 2 more") {
 		t.Errorf("expected truncation message, got:\n%s", out)
 	}
 }
