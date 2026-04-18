@@ -274,9 +274,9 @@ func (a *analysis) inspectDeployment(r Record, obj map[string]any) {
 	// Zero available replicas when some are desired
 	specReplicas := getInt(spec, "replicas")
 	availableReplicas := getInt(status, "availableReplicas")
-	if specReplicas > 0 && availableReplicas == 0 {
+	if specReplicas > 0 && availableReplicas < specReplicas {
 		a.workloadIssues = append(a.workloadIssues,
-			fmt.Sprintf("[DEPLOY] %s zero-available-replicas desired=%d", nsName, specReplicas))
+			fmt.Sprintf("[DEPLOY] %s available=%d desired=%d", nsName, availableReplicas, specReplicas))
 	}
 
 	for _, c := range getSlice(status, "conditions") {
@@ -284,17 +284,9 @@ func (a *analysis) inspectDeployment(r Record, obj map[string]any) {
 		if !ok {
 			continue
 		}
-		condType := getString(cm, "type")
-		condStatus := getString(cm, "status")
-		reason := getString(cm, "reason")
-
-		if condType == "Available" && condStatus == "False" {
+		if getString(cm, "type") == "Progressing" && getString(cm, "reason") == "ProgressDeadlineExceeded" {
 			a.workloadIssues = append(a.workloadIssues,
-				fmt.Sprintf("[DEPLOY] %s unavailable reason=%s", nsName, reason))
-		}
-		if condType == "Progressing" && reason == "ProgressDeadlineExceeded" {
-			a.workloadIssues = append(a.workloadIssues,
-				fmt.Sprintf("[DEPLOY] %s rollout-failed reason=%s", nsName, reason))
+				fmt.Sprintf("[DEPLOY] %s rollout-stalled reason=ProgressDeadlineExceeded", nsName))
 		}
 	}
 }

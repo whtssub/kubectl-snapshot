@@ -567,8 +567,8 @@ func TestAnalyze_Deployment_ZeroAvailableReplicas(t *testing.T) {
 	if !strings.Contains(out, "[DEPLOY]") {
 		t.Error("expected [DEPLOY] in workload issues")
 	}
-	if !strings.Contains(out, "zero-available-replicas") {
-		t.Error("expected zero-available-replicas signal")
+	if !strings.Contains(out, "available=0 desired=3") {
+		t.Error("expected available=0 desired=3 signal")
 	}
 }
 
@@ -586,8 +586,8 @@ func TestAnalyze_Deployment_Unavailable(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(out, "unavailable") {
-		t.Error("expected unavailable signal in workload issues")
+	if !strings.Contains(out, "available=1 desired=2") {
+		t.Error("expected available=1 desired=2 signal in workload issues")
 	}
 }
 
@@ -609,8 +609,8 @@ func TestAnalyze_Deployment_RolloutFailed(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(out, "rollout-failed") {
-		t.Error("expected rollout-failed signal")
+	if !strings.Contains(out, "rollout-stalled") {
+		t.Error("expected rollout-stalled signal")
 	}
 	if !strings.Contains(out, "ProgressDeadlineExceeded") {
 		t.Error("expected ProgressDeadlineExceeded reason")
