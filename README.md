@@ -1,14 +1,50 @@
-# kubectl-snapshot
+```
+  _          _               _   _                                              _           _
+ | | ___   _| |__   ___  ___| |_| |   ___ _ __   __ _ _ __  ___| |__   ___ | |_
+ | |/ / | | | '_ \ / _ \/ __| __| |  / __| '_ \ / _` | '_ \/ __| '_ \ / _ \| __|
+ |   <| |_| | |_) |  __/ (__| |_| |  \__ \ | | | (_| | |_) \__ \ | | | (_) | |_
+ |_|\_\\__,_|_.__/ \___|\___|\__|_|  |___/_| |_|\__,_| .__/|___/_| |_|\___/ \__|
+                                                       |_|
 
-A `kubectl` plugin for capturing point-in-time snapshots of Kubernetes cluster state and diffing them for post-incident analysis.
+              📸  point-in-time Kubernetes cluster forensics
+```
+
+[![CI](https://github.com/whtssub/kubectl-snapshot/actions/workflows/release.yml/badge.svg)](https://github.com/whtssub/kubectl-snapshot/actions)
+[![Go 1.22+](https://img.shields.io/badge/go-1.22+-00ADD8?logo=go)](https://go.dev/)
+[![License](https://img.shields.io/badge/license-Apache%202.0-blue)](LICENSE)
+[![Release](https://img.shields.io/github/v/release/whtssub/kubectl-snapshot)](https://github.com/whtssub/kubectl-snapshot/releases)
+
+A `kubectl` plugin that captures point-in-time snapshots of Kubernetes cluster state and analyzes them for post-incident review. Freeze what your cluster looked like, diff two snapshots to see what changed, or run a scored incident analysis to surface pod failures, node pressure, deployment stalls, and storage problems — all from a single portable JSON file.
+
+---
 
 ## What it does
 
-- **Capture** — serialises 24 resource types into a portable JSON bundle
-- **Diff** — compares two bundles and shows what was added, removed, or changed
-- **Analyze** — inspects a bundle for incident signals and produces a severity-scored report
+| Command | Description |
+|---------|-------------|
+| `capture` | Serialises 24 resource types into a portable JSON bundle |
+| `diff` | Compares two bundles — shows what was added, removed, or changed |
+| `analyze` | Inspects a bundle for incident signals with a severity-scored report |
+
+---
 
 ## Install
+
+### From a release binary (recommended)
+
+Download the archive for your platform from the [Releases](https://github.com/whtssub/kubectl-snapshot/releases) page, extract it, and place the binary on your `PATH`.
+
+```bash
+# macOS arm64
+tar -xzf kubectl-snapshot_v0.2.0_darwin_arm64.tar.gz
+mv kubectl-snapshot ~/.local/bin/
+
+# Linux amd64
+tar -xzf kubectl-snapshot_v0.2.0_linux_amd64.tar.gz
+mv kubectl-snapshot ~/.local/bin/
+```
+
+`kubectl` discovers it automatically because the binary is named `kubectl-snapshot`.
 
 ### From source (Go 1.22+)
 
@@ -16,32 +52,7 @@ A `kubectl` plugin for capturing point-in-time snapshots of Kubernetes cluster s
 go install github.com/whtssub/kubectl-snapshot/cmd/kubectl-snapshot@latest
 ```
 
-### From a release binary
-
-Download the archive for your platform from the [Releases](https://github.com/whtssub/kubectl-snapshot/releases) page, extract it, and put the `kubectl-snapshot` binary somewhere on your `PATH`.
-
-```bash
-# Example: macOS arm64
-tar -xzf kubectl-snapshot_v0.1.0_darwin_arm64.tar.gz
-mv kubectl-snapshot ~/.local/bin/
-```
-
-`kubectl` discovers it automatically because the binary is named `kubectl-snapshot`.
-
-## Captured resource types
-
-| Category | Resources |
-|----------|-----------|
-| Core workloads | pods, nodes, events |
-| App workloads | deployments, replicasets, statefulsets, daemonsets, jobs, cronjobs |
-| Networking | services, endpoints, ingresses, networkpolicies |
-| Storage | persistentvolumeclaims, persistentvolumes |
-| Config | configmaps *, secrets * |
-| RBAC | serviceaccounts, roles, rolebindings, clusterroles, clusterrolebindings |
-| Autoscaling | horizontalpodautoscalers, verticalpodautoscalers † |
-
-\* `.data` and `.binaryData` are **never written to disk** — only metadata is captured.  
-† Silently skipped on clusters without the VPA operator.
+---
 
 ## Usage
 
@@ -79,10 +90,20 @@ Removed:        0
 Changed:        1
 Net delta:      +33
 
-## ADDED RESOURCES
-- deployments default/api-server
-- persistentvolumeclaims default/data-pvc
-...
+📋 ADDED RESOURCES
+─────────────────────────────────
+   1. deployments default/api-server
+   2. persistentvolumeclaims default/data-pvc
+   3. pods default/worker-7d9f
+  ... and 30 more
+
+📋 REMOVED RESOURCES
+─────────────────────────────────
+  ✓ none
+
+📋 CHANGED RESOURCES
+─────────────────────────────────
+   1. deployments default/frontend
 ```
 
 ### Analyze
@@ -94,8 +115,8 @@ kubectl snapshot analyze snap.json --no-resource-mix --no-warning-events
 ```
 
 ```
-Snapshot Incident Analysis
--------------------------
+📸 Snapshot Incident Analysis
+═════════════════════════════════
 Captured at:        2026-04-17 10:00:00 UTC
 Cluster context:    kind-prod
 Total records:      312
@@ -103,37 +124,92 @@ Total restarts:     6
 Warning events:     10
 Non-normal events:  0
 
-## INCIDENT SCORE
-- severity: HIGH
-- score: 43 (pods*3 + nodes*4 + workloads*3 + storage*2 + warnings + restarts)
+⚠️ INCIDENT SCORE
+- severity: 🔴 HIGH
+- score:    43
+- formula:  pods×3 + nodes×4 + workloads×3 + storage×2 + warnings + restarts (cap 50)
+- thresholds: LOW <15 · MEDIUM 15–39 · HIGH ≥40
 
-## POD ISSUES
-- [CRASHLOOP] sre-lab/api-5d8b9f container=app msg="back-off restarting failed container"
-- [OOMKILLED] sre-lab/worker container=main
-- sre-lab/batch-job phase=Failed
+📦 RESOURCE MIX
+  pods                         184
+  events                        72
+  deployments                   18
+  replicasets                   18
 
-## WORKLOAD ISSUES
-- [DEPLOY] sre-lab/api rollout-failed reason=ProgressDeadlineExceeded
-- [STS] sre-lab/postgres ready=1 desired=3
-- [HPA] sre-lab/api at-max-replicas current=10 max=10
+🐳 POD ISSUES
+─────────────────────────────────
+   1. [CRASHLOOP] sre-lab/api-5d8b9f container=app msg="back-off restarting failed container"
+   2. [OOMKILLED] sre-lab/worker container=main
+   3. sre-lab/batch phase=Failed
 
-## STORAGE ISSUES
-- [PVC] sre-lab/data-vol phase=Pending
-- [PV] pv-archive phase=Released
+⚙️  WORKLOAD ISSUES
+─────────────────────────────────
+   1. [DEPLOY] sre-lab/api available=0 desired=3
+   2. [DEPLOY] sre-lab/api rollout-stalled reason=ProgressDeadlineExceeded
+   3. [STS] sre-lab/postgres ready=1 desired=3
+   4. [HPA] sre-lab/api at-max-replicas current=10 max=10
 
-## NODE ISSUES
-- node1 MemoryPressure=True reason=KubeletHasInsufficientMemory
+💾 STORAGE ISSUES
+─────────────────────────────────
+   1. [PVC] sre-lab/data-vol phase=Pending
+   2. [PV] pv-archive phase=Released
 
-## WARNING EVENTS
-- sre-lab/api.1a2b3c reason=BackOff msg="back-off restarting failed container app..."
+🖥️  NODE ISSUES
+─────────────────────────────────
+   1. node1 MemoryPressure=True reason=KubeletHasInsufficientMemory
+
+⚠️  WARNING EVENTS
+─────────────────────────────────
+   1. sre-lab/api.1a2b3c reason=BackOff msg="back-off restarting failed container app..."
 ```
+
+> **Color output** is enabled by default. Set `NO_COLOR=1` to disable.
 
 ### Version
 
 ```bash
 kubectl snapshot version
-# kubectl-snapshot v0.1.0 (commit: abc1234, built: 2026-04-17)
+# kubectl-snapshot v0.2.0 (commit: abc1234, built: 2026-04-17)
 ```
+
+---
+
+## Captured resource types
+
+| Category | Resources |
+|----------|-----------|
+| Core workloads | pods, nodes, events |
+| App workloads | deployments, replicasets, statefulsets, daemonsets, jobs, cronjobs |
+| Networking | services, endpoints, ingresses, networkpolicies |
+| Storage | persistentvolumeclaims, persistentvolumes |
+| Config | configmaps *, secrets * |
+| RBAC | serviceaccounts, roles, rolebindings, clusterroles, clusterrolebindings |
+| Autoscaling | horizontalpodautoscalers, verticalpodautoscalers † |
+
+\* `.data` and `.binaryData` are **never written to disk** — only metadata is captured.  
+† Silently skipped on clusters without the VPA operator.
+
+---
+
+## Understanding severity
+
+The `analyze` command scores a snapshot using:
+
+```
+score = pods×3 + nodes×4 + workloads×3 + storage×2 + warnings + restarts
+```
+
+Restart count is **capped at 50** before scoring — a pod with 1 000 restarts won't inflate the score to noise. The raw count is always shown in the header.
+
+| Severity | Score | `--severity-threshold` effect |
+|----------|-------|-------------------------------|
+| 🟢 LOW | < 15 | No filtering; all sections shown at full `--max-items` |
+| 🟡 MEDIUM | 15 – 39 | Suppresses LOW results; up to 50 items per section |
+| 🔴 HIGH | ≥ 40 | Suppresses LOW + MEDIUM results; up to 10 items per section |
+
+**Job-owned pods are excluded** from all analysis — they run to completion by design and their exit states are not incident signals.
+
+---
 
 ## Supported flags
 
@@ -146,27 +222,11 @@ kubectl snapshot version
 | `capture` | `--compress` | Compress output: `gzip` |
 | `diff` | `--max-items` | Max entries per section (default: 15) |
 | `analyze` | `--max-items` | Max entries per section (default: 15) |
-| `analyze` | `--severity-threshold` | Suppress output below this level: `low`, `medium`, `high` (also tightens per-section item limits) |
+| `analyze` | `--severity-threshold` | Suppress output below this level: `low`, `medium`, `high` |
 | `analyze` | `--no-resource-mix` | Hide resource mix section |
 | `analyze` | `--no-warning-events` | Hide warning events section |
 
-## Understanding severity thresholds
-
-The `analyze` command scores a snapshot using:
-
-```
-score = pods×3 + nodes×4 + workloads×3 + storage×2 + warnings + restarts
-```
-
-Restart count is **capped at 50** before being added to the score, so a pod with 1 000 restarts does not inflate the score to dangerous levels. The raw count is still shown in the header.
-
-| Severity | Score range | What `--severity-threshold` does |
-|----------|-------------|----------------------------------|
-| LOW | < 15 | No filtering; all sections shown at full `--max-items` |
-| MEDIUM | 15 – 39 | Suppresses LOW snapshots; shows up to 50 items per section |
-| HIGH | ≥ 40 | Suppresses LOW and MEDIUM snapshots; shows up to 10 items per section |
-
-Job-owned pods are excluded from all analysis — they are meant to run to completion and their exit states are not incident signals.
+---
 
 ## Local development
 
@@ -213,6 +273,8 @@ Included scenarios (namespace `sre-lab`):
 ```bash
 go test -race ./...
 ```
+
+---
 
 ## License
 
