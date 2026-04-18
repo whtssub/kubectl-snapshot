@@ -549,6 +549,10 @@ func makePVRecord(name string, obj map[string]any) Record {
 	return Record{Group: "", Version: "v1", Resource: "persistentvolumes", Name: name, Object: obj}
 }
 
+func makeRSRecord(namespace, name string, obj map[string]any) Record {
+	return Record{Group: "apps", Version: "v1", Resource: "replicasets", Namespace: namespace, Name: name, Object: obj}
+}
+
 func makeHPARecord(namespace, name string, obj map[string]any) Record {
 	return Record{Group: "autoscaling", Version: "v2", Resource: "horizontalpodautoscalers", Namespace: namespace, Name: name, Object: obj}
 }
@@ -633,6 +637,39 @@ func TestAnalyze_Deployment_Healthy_NotReported(t *testing.T) {
 	}
 	if strings.Contains(out, "[DEPLOY]") {
 		t.Error("healthy deployment should not appear in workload issues")
+	}
+}
+
+// --- ReplicaSet analysis ---
+
+func TestAnalyze_ReplicaSet_PartiallyReady_Reported(t *testing.T) {
+	rs := makeRSRecord("default", "api-rs", map[string]any{
+		"spec":   map[string]any{"replicas": float64(3)},
+		"status": map[string]any{"readyReplicas": float64(1)},
+	})
+	out, err := Analyze(bundleFromRecords([]Record{rs}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out, "[RS]") {
+		t.Error("expected [RS] in workload issues")
+	}
+	if !strings.Contains(out, "ready=1") || !strings.Contains(out, "desired=3") {
+		t.Errorf("expected ready/desired counts in output, got:\n%s", out)
+	}
+}
+
+func TestAnalyze_ReplicaSet_FullyReady_NotReported(t *testing.T) {
+	rs := makeRSRecord("default", "api-rs-ok", map[string]any{
+		"spec":   map[string]any{"replicas": float64(3)},
+		"status": map[string]any{"readyReplicas": float64(3)},
+	})
+	out, err := Analyze(bundleFromRecords([]Record{rs}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(out, "[RS]") {
+		t.Error("fully ready ReplicaSet should not appear in workload issues")
 	}
 }
 

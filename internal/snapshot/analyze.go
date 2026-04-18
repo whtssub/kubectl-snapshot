@@ -67,6 +67,8 @@ func AnalyzeWithOptions(bundle *Bundle, opts AnalyzeOptions) (string, error) {
 			a.inspectPVC(r, obj)
 		case "persistentvolumes":
 			a.inspectPV(r, obj)
+		case "replicasets":
+			a.inspectReplicaSet(r, obj)
 		case "horizontalpodautoscalers":
 			a.inspectHPA(r, obj)
 		}
@@ -301,6 +303,19 @@ func (a *analysis) inspectStatefulSet(r Record, obj map[string]any) {
 	if desired > 0 && ready < desired {
 		a.workloadIssues = append(a.workloadIssues,
 			fmt.Sprintf("[STS] %s ready=%d desired=%d", nsName, ready, desired))
+	}
+}
+
+func (a *analysis) inspectReplicaSet(r Record, obj map[string]any) {
+	nsName := namespacedName(r.Namespace, r.Name)
+	status := getMap(obj, "status")
+	spec := getMap(obj, "spec")
+
+	desired := getInt(spec, "replicas")
+	ready := getInt(status, "readyReplicas")
+	if desired > 0 && ready < desired {
+		a.workloadIssues = append(a.workloadIssues,
+			fmt.Sprintf("[RS] %s ready=%d desired=%d", nsName, ready, desired))
 	}
 }
 
