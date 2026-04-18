@@ -210,6 +210,27 @@ func TestAnalyze_TotalRestarts_Counted(t *testing.T) {
 	}
 }
 
+func TestAnalyze_RestartsCapped_ScoreNotInflated(t *testing.T) {
+	pod := makePodRecord("default", "crasher", map[string]any{
+		"status": map[string]any{
+			"containerStatuses": []any{
+				map[string]any{"name": "app", "restartCount": float64(200), "state": map[string]any{}},
+			},
+		},
+	})
+	out, err := Analyze(bundleFromRecords([]Record{pod}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out, "Total restarts:     200") {
+		t.Error("raw restart count should display uncapped")
+	}
+	// 1 pod issue (restarts>0) * 3 + capped restarts 50 = 53
+	if !strings.Contains(out, "score: 53") {
+		t.Errorf("score should be 53 (capped restarts), got:\n%s", out)
+	}
+}
+
 func TestAnalyze_JobPod_NotReported(t *testing.T) {
 	pod := makePodRecord("default", "batch-abc", map[string]any{
 		"metadata": map[string]any{

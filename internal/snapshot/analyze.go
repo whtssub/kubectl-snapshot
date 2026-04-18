@@ -88,9 +88,13 @@ func AnalyzeWithOptions(bundle *Bundle, opts AnalyzeOptions) (string, error) {
 	sb.WriteString(fmt.Sprintf("Warning events:     %d\n", len(a.warningEvents)))
 	sb.WriteString(fmt.Sprintf("Non-normal events:  %d\n\n", a.unknownEventLevels))
 
+	cappedRestarts := a.totalRestarts
+	if cappedRestarts > 50 {
+		cappedRestarts = 50
+	}
 	score, severity := computeIncidentScoreAndSeverity(
 		len(a.podIssues), len(a.nodeIssues), len(a.warningEvents),
-		a.totalRestarts, len(a.workloadIssues), len(a.storageIssues),
+		cappedRestarts, len(a.workloadIssues), len(a.storageIssues),
 	)
 	if belowSeverityThreshold(severity, opts.MinSeverity) {
 		sb.WriteString("Result: below configured severity threshold\n")
@@ -128,7 +132,7 @@ func computeIncidentScoreAndSeverity(podIssues, nodeIssues, warnings, restarts, 
 func writeIncidentScore(sb *strings.Builder, score int, severity string) {
 	sb.WriteString("## INCIDENT SCORE\n")
 	sb.WriteString(fmt.Sprintf("- severity: %s\n", severity))
-	sb.WriteString(fmt.Sprintf("- score: %d (pods*3 + nodes*4 + workloads*3 + storage*2 + warnings + restarts)\n\n", score))
+	sb.WriteString(fmt.Sprintf("- score: %d (pods*3 + nodes*4 + workloads*3 + storage*2 + warnings + restarts, capped at 50)\n\n", score))
 }
 
 func writeResourceMix(sb *strings.Builder, counts map[string]int) {
