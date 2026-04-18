@@ -146,9 +146,27 @@ kubectl snapshot version
 | `capture` | `--compress` | Compress output: `gzip` |
 | `diff` | `--max-items` | Max entries per section (default: 15) |
 | `analyze` | `--max-items` | Max entries per section (default: 15) |
-| `analyze` | `--severity-threshold` | Only show details at or above: `low`, `medium`, `high` |
+| `analyze` | `--severity-threshold` | Suppress output below this level: `low`, `medium`, `high` (also tightens per-section item limits) |
 | `analyze` | `--no-resource-mix` | Hide resource mix section |
 | `analyze` | `--no-warning-events` | Hide warning events section |
+
+## Understanding severity thresholds
+
+The `analyze` command scores a snapshot using:
+
+```
+score = pods×3 + nodes×4 + workloads×3 + storage×2 + warnings + restarts
+```
+
+Restart count is **capped at 50** before being added to the score, so a pod with 1 000 restarts does not inflate the score to dangerous levels. The raw count is still shown in the header.
+
+| Severity | Score range | What `--severity-threshold` does |
+|----------|-------------|----------------------------------|
+| LOW | < 15 | No filtering; all sections shown at full `--max-items` |
+| MEDIUM | 15 – 39 | Suppresses LOW snapshots; shows up to 50 items per section |
+| HIGH | ≥ 40 | Suppresses LOW and MEDIUM snapshots; shows up to 10 items per section |
+
+Job-owned pods are excluded from all analysis — they are meant to run to completion and their exit states are not incident signals.
 
 ## Local development
 
