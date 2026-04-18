@@ -105,16 +105,24 @@ func AnalyzeWithOptions(bundle *Bundle, opts AnalyzeOptions) (string, error) {
 		return sb.String(), nil
 	}
 
+	displayLimit := maxItems
+	switch strings.ToUpper(strings.TrimSpace(opts.MinSeverity)) {
+	case "HIGH":
+		displayLimit = 10
+	case "MEDIUM":
+		displayLimit = 50
+	}
+
 	writeIncidentScore(&sb, score, severity)
 	if !opts.HideResourceMix {
 		writeResourceMix(&sb, a.resourceCounts)
 	}
-	writeSection(&sb, "POD ISSUES", a.podIssues, maxItems)
-	writeSection(&sb, "NODE ISSUES", a.nodeIssues, maxItems)
-	writeSection(&sb, "WORKLOAD ISSUES", a.workloadIssues, maxItems)
-	writeSection(&sb, "STORAGE ISSUES", a.storageIssues, maxItems)
+	writeSection(&sb, "POD ISSUES", a.podIssues, displayLimit)
+	writeSection(&sb, "NODE ISSUES", a.nodeIssues, displayLimit)
+	writeSection(&sb, "WORKLOAD ISSUES", a.workloadIssues, displayLimit)
+	writeSection(&sb, "STORAGE ISSUES", a.storageIssues, displayLimit)
 	if !opts.HideWarningEvents {
-		writeSection(&sb, "WARNING EVENTS", a.warningEvents, maxItems)
+		writeSection(&sb, "WARNING EVENTS", a.warningEvents, displayLimit)
 	}
 	return sb.String(), nil
 }
@@ -133,7 +141,7 @@ func computeIncidentScoreAndSeverity(podIssues, nodeIssues, warnings, restarts, 
 
 func writeIncidentScore(sb *strings.Builder, score int, severity string) {
 	sb.WriteString("## INCIDENT SCORE\n")
-	sb.WriteString(fmt.Sprintf("- severity: %s\n", severity))
+	sb.WriteString(fmt.Sprintf("- severity: %s\n", colorizedSeverity(severity)))
 	sb.WriteString(fmt.Sprintf("- score: %d (pods*3 + nodes*4 + workloads*3 + storage*2 + warnings + restarts, capped at 50)\n\n", score))
 }
 
