@@ -231,6 +231,47 @@ func TestAnalyze_RestartsCapped_ScoreNotInflated(t *testing.T) {
 	}
 }
 
+func TestAnalyze_SucceededPod_NotReported(t *testing.T) {
+	pod := makePodRecord("default", "completed-job-abc", map[string]any{
+		"status": map[string]any{
+			"phase": "Succeeded",
+			"containerStatuses": []any{
+				map[string]any{"name": "worker", "restartCount": float64(2), "state": map[string]any{}},
+			},
+		},
+	})
+	out, err := Analyze(bundleFromRecords([]Record{pod}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(out, "completed-job-abc") {
+		t.Error("Succeeded pod should not appear in any issue section")
+	}
+}
+
+func TestAnalyze_CronJobPod_NotReported(t *testing.T) {
+	pod := makePodRecord("default", "cleanup-cronjob-xyz", map[string]any{
+		"metadata": map[string]any{
+			"ownerReferences": []any{
+				map[string]any{"kind": "CronJob", "name": "hourly-cleanup"},
+			},
+		},
+		"status": map[string]any{
+			"phase": "Failed",
+			"containerStatuses": []any{
+				map[string]any{"name": "worker", "restartCount": float64(3), "state": map[string]any{}},
+			},
+		},
+	})
+	out, err := Analyze(bundleFromRecords([]Record{pod}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(out, "cleanup-cronjob-xyz") {
+		t.Error("CronJob-owned pod should not appear in any issue section")
+	}
+}
+
 func TestAnalyze_JobPod_NotReported(t *testing.T) {
 	pod := makePodRecord("default", "batch-abc", map[string]any{
 		"metadata": map[string]any{

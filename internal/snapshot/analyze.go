@@ -188,6 +188,9 @@ func (a *analysis) inspectPod(r Record, obj map[string]any) {
 	nsName := namespacedName(r.Namespace, r.Name)
 
 	phase := getString(status, "phase")
+	if phase == "Succeeded" {
+		return
+	}
 	if phase == "Failed" || phase == "Unknown" || phase == "Pending" {
 		a.podIssues = append(a.podIssues, fmt.Sprintf("%s phase=%s", nsName, phase))
 	}
@@ -500,7 +503,11 @@ func isJobPod(obj map[string]any) bool {
 	metadata := getMap(obj, "metadata")
 	for _, ref := range getSlice(metadata, "ownerReferences") {
 		refMap, ok := ref.(map[string]any)
-		if ok && getString(refMap, "kind") == "Job" {
+		if !ok {
+			continue
+		}
+		switch getString(refMap, "kind") {
+		case "Job", "CronJob":
 			return true
 		}
 	}
