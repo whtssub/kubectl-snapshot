@@ -165,12 +165,6 @@ Non-normal events:  0
 
 > **Color output** is enabled by default. Set `NO_COLOR=1` to disable.
 
-### Version
-
-```bash
-kubectl snapshot version
-# kubectl-snapshot v0.2.0 (commit: abc1234, built: 2026-04-17)
-```
 
 ---
 
