@@ -150,6 +150,8 @@ Non-normal events:  0
    2. [DEPLOY] sre-lab/api rollout-stalled reason=ProgressDeadlineExceeded
    3. [STS] sre-lab/postgres ready=1 desired=3
    4. [HPA] sre-lab/api at-max-replicas current=10 max=10
+   5. [JOB] sre-lab/etl-pipeline failed reason=BackoffLimitExceeded
+   6. [CRONJOB] sre-lab/nightly-report never-succeeded last-schedule=2026-04-17T10:00:00Z
 
 💾 STORAGE ISSUES
 ─────────────────────────────────
@@ -166,13 +168,6 @@ Non-normal events:  0
 ```
 
 > **Color output** is enabled by default. Set `NO_COLOR=1` to disable.
-
-### Version
-
-```bash
-kubectl snapshot version
-# kubectl-snapshot v0.2.0 (commit: abc1234, built: 2026-04-17)
-```
 
 ---
 
@@ -209,7 +204,15 @@ Restart count is **capped at 50** before scoring — a pod with 1 000 restarts w
 | 🟡 MEDIUM | 15 – 39 | Suppresses LOW results; up to 50 items per section |
 | 🔴 HIGH | ≥ 40 | Suppresses LOW + MEDIUM results; up to 10 items per section |
 
-**Job-owned pods are excluded** from all analysis — they run to completion by design and their exit states are not incident signals.
+**Job-owned pods** are excluded from pod issue analysis — they run to completion by design. The Jobs and CronJobs themselves are analyzed under **WORKLOAD ISSUES**:
+
+| Signal | Condition |
+|--------|-----------|
+| `[JOB] <name> suspended` | `spec.suspend: true` |
+| `[JOB] <name> failed reason=<r>` | `status.conditions[Failed=True]` |
+| `[JOB] <name> failed-attempts=N` | `status.failed > 0`, no `Complete` condition |
+| `[CRONJOB] <name> suspended` | `spec.suspend: true` |
+| `[CRONJOB] <name> never-succeeded` | scheduled at least once but `lastSuccessfulTime` is absent |
 
 ---
 
@@ -269,8 +272,18 @@ Included scenarios (namespace `sre-lab`):
 | `imagepullbackoff-demo` | ErrImagePull / ImagePullBackOff waiting state |
 | `pending-unschedulable-demo` | Insufficient CPU/memory, pod stuck Pending |
 | `diskpressure-best-effort` | Best-effort DiskPressure trigger on node |
+| `completed-jobs` | Completed Job + CronJob — verifies zero false positives in `analyze` |
 
 ### Run tests
+
+```bash
+make test       # full suite with race detector
+make coverage   # coverage report (text summary)
+make fmt        # format all Go source files
+make lint       # go vet
+```
+
+Or directly without Make:
 
 ```bash
 go test -race ./...
