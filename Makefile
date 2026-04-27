@@ -11,10 +11,15 @@ LAB_NS ?= sre-lab
 .PHONY: help kind-up kind-down build install-plugin plugin-check lab-init lab-clean \
 	capture-before capture-after diff analyze \
 	scenario-oomkill scenario-crashloop scenario-imagepullbackoff scenario-pending \
-	scenario-nodepressure scenario-completedjobs scenario-all scenario-clean status
+	scenario-nodepressure scenario-completedjobs scenario-all scenario-clean status \
+	test fmt lint coverage
 
 help:
 	@echo "Available targets:"
+	@echo "  make test                - Run test suite with race detector"
+	@echo "  make fmt                 - Format Go source files"
+	@echo "  make lint                - Run go vet linter"
+	@echo "  make coverage            - Generate coverage report"
 	@echo "  make kind-up             - Create kind cluster"
 	@echo "  make kind-down           - Delete kind cluster"
 	@echo "  make build               - Build kubectl-snapshot binary"
@@ -40,6 +45,19 @@ kind-down:
 build:
 	mkdir -p .gomodcache .gocache
 	GOMODCACHE=$$(pwd)/.gomodcache GOCACHE=$$(pwd)/.gocache go build -o $(PLUGIN_BIN) ./cmd/kubectl-snapshot
+
+test:
+	go test -race ./...
+
+fmt:
+	gofmt -l -w .
+
+lint:
+	go vet ./...
+
+coverage:
+	go test -coverprofile=coverage.out ./...
+	go tool cover -func=coverage.out
 
 install-plugin: build
 	mkdir -p "$(LOCAL_BIN)"
