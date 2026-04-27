@@ -203,7 +203,15 @@ Restart count is **capped at 50** before scoring — a pod with 1 000 restarts w
 | 🟡 MEDIUM | 15 – 39 | Suppresses LOW results; up to 50 items per section |
 | 🔴 HIGH | ≥ 40 | Suppresses LOW + MEDIUM results; up to 10 items per section |
 
-**Job-owned pods are excluded** from all analysis — they run to completion by design and their exit states are not incident signals.
+**Job-owned pods** are excluded from pod issue analysis — they run to completion by design. The Jobs and CronJobs themselves are analyzed under **WORKLOAD ISSUES**:
+
+| Signal | Condition |
+|--------|-----------|
+| `[JOB] <name> suspended` | `spec.suspend: true` |
+| `[JOB] <name> failed reason=<r>` | `status.conditions[Failed=True]` |
+| `[JOB] <name> failed-attempts=N` | `status.failed > 0`, no `Complete` condition |
+| `[CRONJOB] <name> suspended` | `spec.suspend: true` |
+| `[CRONJOB] <name> never-succeeded` | scheduled at least once but `lastSuccessfulTime` is absent |
 
 ---
 
