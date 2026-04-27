@@ -275,6 +275,15 @@ Included scenarios (namespace `sre-lab`):
 ### Run tests
 
 ```bash
+make test       # full suite with race detector
+make coverage   # coverage report (text summary)
+make fmt        # format all Go source files
+make lint       # go vet
+```
+
+Or directly without Make:
+
+```bash
 go test -race ./...
 ```
 
