@@ -148,6 +148,8 @@ Non-normal events:  0
    2. [DEPLOY] sre-lab/api rollout-stalled reason=ProgressDeadlineExceeded
    3. [STS] sre-lab/postgres ready=1 desired=3
    4. [HPA] sre-lab/api at-max-replicas current=10 max=10
+   5. [JOB] sre-lab/etl-pipeline failed reason=BackoffLimitExceeded
+   6. [CRONJOB] sre-lab/nightly-report never-succeeded last-schedule=2026-04-17T10:00:00Z
 
 💾 STORAGE ISSUES
 ─────────────────────────────────
