@@ -271,6 +271,7 @@ Included scenarios (namespace `sre-lab`):
 | `imagepullbackoff-demo` | ErrImagePull / ImagePullBackOff waiting state |
 | `pending-unschedulable-demo` | Insufficient CPU/memory, pod stuck Pending |
 | `diskpressure-best-effort` | Best-effort DiskPressure trigger on node |
+| `completed-jobs` | Completed Job + CronJob — verifies zero false positives in `analyze` |
 
 ### Run tests
 
