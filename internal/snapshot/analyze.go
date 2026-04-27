@@ -71,6 +71,10 @@ func AnalyzeWithOptions(bundle *Bundle, opts AnalyzeOptions) (string, error) {
 			a.inspectReplicaSet(r, obj)
 		case "horizontalpodautoscalers":
 			a.inspectHPA(r, obj)
+		case "jobs":
+			a.inspectJob(r, obj)
+		case "cronjobs":
+			a.inspectCronJob(r, obj)
 		}
 	}
 
@@ -391,6 +395,64 @@ func (a *analysis) inspectHPA(r Record, obj map[string]any) {
 	}
 }
 
+func (a *analysis) inspectJob(r Record, obj map[string]any) {
+	nsName := namespacedName(r.Namespace, r.Name)
+	spec := getMap(obj, "spec")
+	status := getMap(obj, "status")
+
+	if getBool(spec, "suspend") {
+		a.workloadIssues = append(a.workloadIssues,
+			fmt.Sprintf("[JOB] %s suspended", nsName))
+		return
+	}
+
+	for _, c := range getSlice(status, "conditions") {
+		cm, ok := c.(map[string]any)
+		if !ok {
+			continue
+		}
+		if getString(cm, "type") == "Failed" && getString(cm, "status") == "True" {
+			a.workloadIssues = append(a.workloadIssues,
+				fmt.Sprintf("[JOB] %s failed reason=%s", nsName, getString(cm, "reason")))
+			return
+		}
+	}
+
+	failed := getInt(status, "failed")
+	if failed > 0 {
+		for _, c := range getSlice(status, "conditions") {
+			cm, ok := c.(map[string]any)
+			if !ok {
+				continue
+			}
+			if getString(cm, "type") == "Complete" && getString(cm, "status") == "True" {
+				return // completed successfully despite retries
+			}
+		}
+		a.workloadIssues = append(a.workloadIssues,
+			fmt.Sprintf("[JOB] %s failed-attempts=%d", nsName, failed))
+	}
+}
+
+func (a *analysis) inspectCronJob(r Record, obj map[string]any) {
+	nsName := namespacedName(r.Namespace, r.Name)
+	spec := getMap(obj, "spec")
+	status := getMap(obj, "status")
+
+	if getBool(spec, "suspend") {
+		a.workloadIssues = append(a.workloadIssues,
+			fmt.Sprintf("[CRONJOB] %s suspended", nsName))
+		return
+	}
+
+	lastSchedule := getString(status, "lastScheduleTime")
+	lastSuccess := getString(status, "lastSuccessfulTime")
+	if lastSchedule != "" && lastSuccess == "" {
+		a.workloadIssues = append(a.workloadIssues,
+			fmt.Sprintf("[CRONJOB] %s never-succeeded last-schedule=%s", nsName, lastSchedule))
+	}
+}
+
 func namespacedName(ns, name string) string {
 	if ns == "" {
 		return name
@@ -435,6 +497,15 @@ func getString(m map[string]any, key string) string {
 	default:
 		return fmt.Sprintf("%v", tv)
 	}
+}
+
+func getBool(m map[string]any, key string) bool {
+	v, ok := m[key]
+	if !ok {
+		return false
+	}
+	b, ok := v.(bool)
+	return ok && b
 }
 
 func getInt(m map[string]any, key string) int {

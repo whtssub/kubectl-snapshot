@@ -931,6 +931,161 @@ func TestAnalyze_HPA_Healthy_NotReported(t *testing.T) {
 	}
 }
 
+func makeJobRecord(namespace, name string, obj map[string]any) Record {
+	return Record{Group: "batch", Version: "v1", Resource: "jobs", Namespace: namespace, Name: name, Object: obj}
+}
+
+func makeCronJobRecord(namespace, name string, obj map[string]any) Record {
+	return Record{Group: "batch", Version: "v1", Resource: "cronjobs", Namespace: namespace, Name: name, Object: obj}
+}
+
+// --- Job analysis ---
+
+func TestAnalyze_Job_Suspended_Flagged(t *testing.T) {
+	job := makeJobRecord("default", "import-job", map[string]any{
+		"spec":   map[string]any{"suspend": true},
+		"status": map[string]any{},
+	})
+	out, err := Analyze(bundleFromRecords([]Record{job}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out, "[JOB]") {
+		t.Error("expected [JOB] in workload issues")
+	}
+	if !strings.Contains(out, "suspended") {
+		t.Error("expected 'suspended' signal for suspended job")
+	}
+}
+
+func TestAnalyze_Job_FailedCondition_Flagged(t *testing.T) {
+	job := makeJobRecord("default", "etl-job", map[string]any{
+		"spec": map[string]any{},
+		"status": map[string]any{
+			"conditions": []any{
+				map[string]any{"type": "Failed", "status": "True", "reason": "BackoffLimitExceeded"},
+			},
+		},
+	})
+	out, err := Analyze(bundleFromRecords([]Record{job}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out, "[JOB]") {
+		t.Error("expected [JOB] in workload issues")
+	}
+	if !strings.Contains(out, "BackoffLimitExceeded") {
+		t.Error("expected BackoffLimitExceeded reason in output")
+	}
+}
+
+func TestAnalyze_Job_FailedAttempts_NoCompleteCondition_Flagged(t *testing.T) {
+	job := makeJobRecord("default", "retry-job", map[string]any{
+		"spec":   map[string]any{},
+		"status": map[string]any{"failed": float64(2)},
+	})
+	out, err := Analyze(bundleFromRecords([]Record{job}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out, "failed-attempts=2") {
+		t.Errorf("expected failed-attempts=2 signal, got:\n%s", out)
+	}
+}
+
+func TestAnalyze_Job_CompletedDespiteRetries_NotFlagged(t *testing.T) {
+	job := makeJobRecord("default", "eventual-job", map[string]any{
+		"spec": map[string]any{},
+		"status": map[string]any{
+			"failed": float64(1),
+			"conditions": []any{
+				map[string]any{"type": "Complete", "status": "True"},
+			},
+		},
+	})
+	out, err := Analyze(bundleFromRecords([]Record{job}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(out, "[JOB]") {
+		t.Error("job that eventually completed should not appear in workload issues")
+	}
+}
+
+func TestAnalyze_Job_Healthy_NotReported(t *testing.T) {
+	job := makeJobRecord("default", "ok-job", map[string]any{
+		"spec": map[string]any{},
+		"status": map[string]any{
+			"succeeded": float64(1),
+			"conditions": []any{
+				map[string]any{"type": "Complete", "status": "True"},
+			},
+		},
+	})
+	out, err := Analyze(bundleFromRecords([]Record{job}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(out, "[JOB]") {
+		t.Error("healthy completed job should not appear in workload issues")
+	}
+}
+
+// --- CronJob analysis ---
+
+func TestAnalyze_CronJob_Suspended_Flagged(t *testing.T) {
+	cj := makeCronJobRecord("default", "nightly-report", map[string]any{
+		"spec":   map[string]any{"suspend": true},
+		"status": map[string]any{},
+	})
+	out, err := Analyze(bundleFromRecords([]Record{cj}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out, "[CRONJOB]") {
+		t.Error("expected [CRONJOB] in workload issues")
+	}
+	if !strings.Contains(out, "suspended") {
+		t.Error("expected 'suspended' signal for suspended CronJob")
+	}
+}
+
+func TestAnalyze_CronJob_NeverSucceeded_Flagged(t *testing.T) {
+	cj := makeCronJobRecord("default", "hourly-cleanup", map[string]any{
+		"spec": map[string]any{},
+		"status": map[string]any{
+			"lastScheduleTime": "2026-04-27T10:00:00Z",
+		},
+	})
+	out, err := Analyze(bundleFromRecords([]Record{cj}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out, "[CRONJOB]") {
+		t.Error("expected [CRONJOB] in workload issues")
+	}
+	if !strings.Contains(out, "never-succeeded") {
+		t.Error("expected 'never-succeeded' signal")
+	}
+}
+
+func TestAnalyze_CronJob_HasSucceeded_NotFlagged(t *testing.T) {
+	cj := makeCronJobRecord("default", "healthy-cj", map[string]any{
+		"spec": map[string]any{},
+		"status": map[string]any{
+			"lastScheduleTime":   "2026-04-27T10:00:00Z",
+			"lastSuccessfulTime": "2026-04-27T10:00:30Z",
+		},
+	})
+	out, err := Analyze(bundleFromRecords([]Record{cj}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(out, "[CRONJOB]") {
+		t.Error("CronJob with recent success should not appear in workload issues")
+	}
+}
+
 // --- OOMKilled prefix ---
 
 func TestAnalyze_OOMKilled_Prefixed(t *testing.T) {
