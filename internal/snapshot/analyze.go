@@ -16,6 +16,7 @@ type analysis struct {
 	totalRestarts      int
 	unknownEventLevels int
 	resourceCounts     map[string]int
+	serviceSet         map[string]bool // namespace/name → true, for ingress backend lookup
 }
 
 func Analyze(bundle *Bundle) (string, error) {
@@ -42,6 +43,15 @@ func AnalyzeWithOptions(bundle *Bundle, opts AnalyzeOptions) (string, error) {
 		workloadIssues: make([]string, 0),
 		storageIssues:  make([]string, 0),
 		resourceCounts: make(map[string]int),
+		serviceSet:     make(map[string]bool),
+	}
+
+	// Pre-pass: build cross-reference indexes used by inspectors that need
+	// to look across record types (e.g. ingress→service).
+	for _, r := range bundle.Records {
+		if r.Resource == "services" {
+			a.serviceSet[namespacedName(r.Namespace, r.Name)] = true
+		}
 	}
 
 	for _, r := range bundle.Records {
@@ -75,6 +85,8 @@ func AnalyzeWithOptions(bundle *Bundle, opts AnalyzeOptions) (string, error) {
 			a.inspectJob(r, obj)
 		case "cronjobs":
 			a.inspectCronJob(r, obj)
+		case "ingresses":
+			a.inspectIngress(r, obj)
 		}
 	}
 
@@ -391,6 +403,53 @@ func (a *analysis) inspectHPA(r Record, obj map[string]any) {
 		if getString(cm, "type") == "AbleToScale" && getString(cm, "status") == "False" {
 			a.workloadIssues = append(a.workloadIssues,
 				fmt.Sprintf("[HPA] %s scale-blocked reason=%s", nsName, getString(cm, "reason")))
+		}
+	}
+}
+
+func (a *analysis) inspectIngress(r Record, obj map[string]any) {
+	nsName := namespacedName(r.Namespace, r.Name)
+	spec := getMap(obj, "spec")
+	seen := make(map[string]bool)
+
+	check := func(svcName, location string) {
+		if svcName == "" {
+			return
+		}
+		if a.serviceSet[r.Namespace+"/"+svcName] {
+			return
+		}
+		signal := fmt.Sprintf("[INGRESS] %s %s missing-service=%s", nsName, location, svcName)
+		if seen[signal] {
+			return
+		}
+		seen[signal] = true
+		a.workloadIssues = append(a.workloadIssues, signal)
+	}
+
+	if defaultBackend := getMap(spec, "defaultBackend"); len(defaultBackend) > 0 {
+		svc := getMap(defaultBackend, "service")
+		check(getString(svc, "name"), "default-backend")
+	}
+
+	for _, rule := range getSlice(spec, "rules") {
+		ruleMap, ok := rule.(map[string]any)
+		if !ok {
+			continue
+		}
+		http := getMap(ruleMap, "http")
+		for _, p := range getSlice(http, "paths") {
+			pathMap, ok := p.(map[string]any)
+			if !ok {
+				continue
+			}
+			backend := getMap(pathMap, "backend")
+			svc := getMap(backend, "service")
+			pathStr := getString(pathMap, "path")
+			if pathStr == "" {
+				pathStr = "/"
+			}
+			check(getString(svc, "name"), "path="+pathStr)
 		}
 	}
 }

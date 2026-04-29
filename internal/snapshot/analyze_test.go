@@ -931,6 +931,157 @@ func TestAnalyze_HPA_Healthy_NotReported(t *testing.T) {
 	}
 }
 
+func makeIngressRecord(namespace, name string, obj map[string]any) Record {
+	return Record{Group: "networking.k8s.io", Version: "v1", Resource: "ingresses", Namespace: namespace, Name: name, Object: obj}
+}
+
+func makeServiceRecord(namespace, name string) Record {
+	return Record{Group: "", Version: "v1", Resource: "services", Namespace: namespace, Name: name, Object: map[string]any{}}
+}
+
+// --- Ingress analysis ---
+
+func TestAnalyze_Ingress_BackendServiceExists_NotFlagged(t *testing.T) {
+	svc := makeServiceRecord("default", "my-app")
+	ing := makeIngressRecord("default", "app-ingress", map[string]any{
+		"spec": map[string]any{
+			"rules": []any{
+				map[string]any{
+					"host": "example.com",
+					"http": map[string]any{
+						"paths": []any{
+							map[string]any{
+								"path":    "/",
+								"backend": map[string]any{"service": map[string]any{"name": "my-app"}},
+							},
+						},
+					},
+				},
+			},
+		},
+	})
+	out, err := Analyze(bundleFromRecords([]Record{svc, ing}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(out, "[INGRESS]") {
+		t.Errorf("ingress with valid backend should not be flagged, got:\n%s", out)
+	}
+}
+
+func TestAnalyze_Ingress_MissingBackendService_Flagged(t *testing.T) {
+	ing := makeIngressRecord("default", "broken", map[string]any{
+		"spec": map[string]any{
+			"rules": []any{
+				map[string]any{
+					"host": "example.com",
+					"http": map[string]any{
+						"paths": []any{
+							map[string]any{
+								"path":    "/api",
+								"backend": map[string]any{"service": map[string]any{"name": "ghost-service"}},
+							},
+						},
+					},
+				},
+			},
+		},
+	})
+	out, err := Analyze(bundleFromRecords([]Record{ing}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out, "[INGRESS]") {
+		t.Error("expected [INGRESS] signal")
+	}
+	if !strings.Contains(out, "missing-service=ghost-service") {
+		t.Errorf("expected missing-service=ghost-service, got:\n%s", out)
+	}
+	if !strings.Contains(out, "path=/api") {
+		t.Errorf("expected path=/api in signal, got:\n%s", out)
+	}
+}
+
+func TestAnalyze_Ingress_MissingDefaultBackend_Flagged(t *testing.T) {
+	ing := makeIngressRecord("default", "default-broken", map[string]any{
+		"spec": map[string]any{
+			"defaultBackend": map[string]any{
+				"service": map[string]any{"name": "absent"},
+			},
+		},
+	})
+	out, err := Analyze(bundleFromRecords([]Record{ing}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out, "default-backend") {
+		t.Error("expected default-backend location in signal")
+	}
+	if !strings.Contains(out, "missing-service=absent") {
+		t.Error("expected missing-service=absent")
+	}
+}
+
+func TestAnalyze_Ingress_CrossNamespaceLookup_NotConfused(t *testing.T) {
+	// Service exists in 'other' namespace; ingress is in 'default'.
+	// Ingress backends are namespace-scoped, so this should still flag.
+	svc := makeServiceRecord("other", "my-app")
+	ing := makeIngressRecord("default", "wrong-ns", map[string]any{
+		"spec": map[string]any{
+			"rules": []any{
+				map[string]any{
+					"http": map[string]any{
+						"paths": []any{
+							map[string]any{
+								"path":    "/",
+								"backend": map[string]any{"service": map[string]any{"name": "my-app"}},
+							},
+						},
+					},
+				},
+			},
+		},
+	})
+	out, err := Analyze(bundleFromRecords([]Record{svc, ing}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out, "missing-service=my-app") {
+		t.Error("ingress backend lookup should be namespace-scoped")
+	}
+}
+
+func TestAnalyze_Ingress_DuplicatePathsToSameMissingService_DedupedSignal(t *testing.T) {
+	ing := makeIngressRecord("default", "many-paths", map[string]any{
+		"spec": map[string]any{
+			"rules": []any{
+				map[string]any{
+					"http": map[string]any{
+						"paths": []any{
+							map[string]any{
+								"path":    "/",
+								"backend": map[string]any{"service": map[string]any{"name": "ghost"}},
+							},
+							map[string]any{
+								"path":    "/",
+								"backend": map[string]any{"service": map[string]any{"name": "ghost"}},
+							},
+						},
+					},
+				},
+			},
+		},
+	})
+	out, err := Analyze(bundleFromRecords([]Record{ing}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	count := strings.Count(out, "missing-service=ghost")
+	if count != 1 {
+		t.Errorf("expected single deduped signal for repeat backend, got %d:\n%s", count, out)
+	}
+}
+
 func makeJobRecord(namespace, name string, obj map[string]any) Record {
 	return Record{Group: "batch", Version: "v1", Resource: "jobs", Namespace: namespace, Name: name, Object: obj}
 }
