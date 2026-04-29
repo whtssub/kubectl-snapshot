@@ -225,9 +225,9 @@ func TestAnalyze_RestartsCapped_ScoreNotInflated(t *testing.T) {
 	if !strings.Contains(out, "Total restarts:     200") {
 		t.Error("raw restart count should display uncapped")
 	}
-	// 1 pod issue (restarts>0) * 3 + capped restarts 50 = 53
-	if !strings.Contains(out, "score:    53") {
-		t.Errorf("score should be 53 (capped restarts), got:\n%s", out)
+	// 1 pod issue * 3 + 1 workload issue (netpol gap in default ns) * 3 + capped restarts 50 = 56
+	if !strings.Contains(out, "score:    56") {
+		t.Errorf("score should be 56 (capped restarts + netpol gap), got:\n%s", out)
 	}
 }
 
@@ -1079,6 +1079,120 @@ func TestAnalyze_Ingress_DuplicatePathsToSameMissingService_DedupedSignal(t *tes
 	count := strings.Count(out, "missing-service=ghost")
 	if count != 1 {
 		t.Errorf("expected single deduped signal for repeat backend, got %d:\n%s", count, out)
+	}
+}
+
+func makeNetworkPolicyRecord(namespace, name string, obj map[string]any) Record {
+	return Record{Group: "networking.k8s.io", Version: "v1", Resource: "networkpolicies", Namespace: namespace, Name: name, Object: obj}
+}
+
+// --- NetworkPolicy gap detection ---
+
+func TestAnalyze_NamespaceWithoutNetworkPolicy_Flagged(t *testing.T) {
+	pod := makePodRecord("exposed-ns", "my-pod", map[string]any{
+		"status": map[string]any{"phase": "Running"},
+	})
+	out, err := Analyze(bundleFromRecords([]Record{pod}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out, "[NETPOL]") {
+		t.Errorf("expected [NETPOL] signal for namespace without policy, got:\n%s", out)
+	}
+	if !strings.Contains(out, "exposed-ns") {
+		t.Error("expected namespace name in NETPOL signal")
+	}
+	if !strings.Contains(out, "no-ingress-policy") {
+		t.Error("expected no-ingress-policy signal")
+	}
+	if !strings.Contains(out, "1 pods exposed") {
+		t.Errorf("expected pod count in signal, got:\n%s", out)
+	}
+}
+
+func TestAnalyze_NamespaceWithExplicitIngressPolicy_NotFlagged(t *testing.T) {
+	pod := makePodRecord("secure-ns", "my-pod", map[string]any{
+		"status": map[string]any{"phase": "Running"},
+	})
+	np := makeNetworkPolicyRecord("secure-ns", "default-deny", map[string]any{
+		"spec": map[string]any{
+			"podSelector": map[string]any{},
+			"policyTypes": []any{"Ingress"},
+		},
+	})
+	out, err := Analyze(bundleFromRecords([]Record{pod, np}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(out, "[NETPOL]") {
+		t.Errorf("namespace with explicit ingress policy should not be flagged, got:\n%s", out)
+	}
+}
+
+func TestAnalyze_NamespaceWithImplicitIngressDefault_NotFlagged(t *testing.T) {
+	// policyTypes omitted → defaults to ["Ingress"] per spec
+	pod := makePodRecord("implicit-ns", "my-pod", map[string]any{
+		"status": map[string]any{"phase": "Running"},
+	})
+	np := makeNetworkPolicyRecord("implicit-ns", "implicit", map[string]any{
+		"spec": map[string]any{
+			"podSelector": map[string]any{},
+		},
+	})
+	out, err := Analyze(bundleFromRecords([]Record{pod, np}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(out, "[NETPOL]") {
+		t.Errorf("policy without policyTypes defaults to Ingress; should not be flagged, got:\n%s", out)
+	}
+}
+
+func TestAnalyze_NamespaceWithEgressOnlyPolicy_Flagged(t *testing.T) {
+	pod := makePodRecord("egress-only", "my-pod", map[string]any{
+		"status": map[string]any{"phase": "Running"},
+	})
+	np := makeNetworkPolicyRecord("egress-only", "egress-policy", map[string]any{
+		"spec": map[string]any{
+			"podSelector": map[string]any{},
+			"policyTypes": []any{"Egress"},
+		},
+	})
+	out, err := Analyze(bundleFromRecords([]Record{pod, np}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out, "[NETPOL]") {
+		t.Errorf("egress-only policy should not satisfy ingress check, got:\n%s", out)
+	}
+}
+
+func TestAnalyze_SucceededPodsExcludedFromNetpolCount(t *testing.T) {
+	pod := makePodRecord("done-ns", "completed", map[string]any{
+		"status": map[string]any{"phase": "Succeeded"},
+	})
+	out, err := Analyze(bundleFromRecords([]Record{pod}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(out, "[NETPOL]") {
+		t.Errorf("succeeded pods should not contribute to netpol gap count, got:\n%s", out)
+	}
+}
+
+func TestAnalyze_JobPodsExcludedFromNetpolCount(t *testing.T) {
+	pod := makePodRecord("batch-ns", "worker-abc", map[string]any{
+		"metadata": map[string]any{
+			"ownerReferences": []any{map[string]any{"kind": "Job", "name": "etl"}},
+		},
+		"status": map[string]any{"phase": "Failed"},
+	})
+	out, err := Analyze(bundleFromRecords([]Record{pod}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(out, "[NETPOL]") {
+		t.Errorf("job-owned pods should not contribute to netpol gap count, got:\n%s", out)
 	}
 }
 

@@ -17,6 +17,8 @@ type analysis struct {
 	unknownEventLevels int
 	resourceCounts     map[string]int
 	serviceSet         map[string]bool // namespace/name → true, for ingress backend lookup
+	nsHasIngressNetpol map[string]bool // namespace → true if any NetworkPolicy applies to Ingress
+	nsActivePodCount   map[string]int  // namespace → count of non-job, non-succeeded pods
 }
 
 func Analyze(bundle *Bundle) (string, error) {
@@ -42,15 +44,34 @@ func AnalyzeWithOptions(bundle *Bundle, opts AnalyzeOptions) (string, error) {
 		warningEvents:  make([]string, 0),
 		workloadIssues: make([]string, 0),
 		storageIssues:  make([]string, 0),
-		resourceCounts: make(map[string]int),
-		serviceSet:     make(map[string]bool),
+		resourceCounts:     make(map[string]int),
+		serviceSet:         make(map[string]bool),
+		nsHasIngressNetpol: make(map[string]bool),
+		nsActivePodCount:   make(map[string]int),
 	}
 
 	// Pre-pass: build cross-reference indexes used by inspectors that need
-	// to look across record types (e.g. ingress→service).
+	// to look across record types (e.g. ingress→service, pod→networkpolicy).
 	for _, r := range bundle.Records {
-		if r.Resource == "services" {
+		obj, ok := r.Object.(map[string]any)
+		if !ok {
+			continue
+		}
+		switch r.Resource {
+		case "services":
 			a.serviceSet[namespacedName(r.Namespace, r.Name)] = true
+		case "networkpolicies":
+			if hasIngressPolicyType(obj) {
+				a.nsHasIngressNetpol[r.Namespace] = true
+			}
+		case "pods":
+			if isJobPod(obj) {
+				continue
+			}
+			if getString(getMap(obj, "status"), "phase") == "Succeeded" {
+				continue
+			}
+			a.nsActivePodCount[r.Namespace]++
 		}
 	}
 
@@ -89,6 +110,8 @@ func AnalyzeWithOptions(bundle *Bundle, opts AnalyzeOptions) (string, error) {
 			a.inspectIngress(r, obj)
 		}
 	}
+
+	a.detectNetworkPolicyGaps()
 
 	sort.Strings(a.podIssues)
 	sort.Strings(a.nodeIssues)
@@ -405,6 +428,33 @@ func (a *analysis) inspectHPA(r Record, obj map[string]any) {
 				fmt.Sprintf("[HPA] %s scale-blocked reason=%s", nsName, getString(cm, "reason")))
 		}
 	}
+}
+
+func (a *analysis) detectNetworkPolicyGaps() {
+	for ns, count := range a.nsActivePodCount {
+		if count == 0 || a.nsHasIngressNetpol[ns] {
+			continue
+		}
+		a.workloadIssues = append(a.workloadIssues,
+			fmt.Sprintf("[NETPOL] %s no-ingress-policy %d pods exposed (implicit allow-all)", ns, count))
+	}
+}
+
+// hasIngressPolicyType reports whether a NetworkPolicy object applies to
+// ingress traffic. A policy applies to Ingress when its policyTypes list
+// contains "Ingress" or when policyTypes is unset (per spec, the default
+// is ["Ingress"]).
+func hasIngressPolicyType(policy map[string]any) bool {
+	policyTypes := getSlice(getMap(policy, "spec"), "policyTypes")
+	if len(policyTypes) == 0 {
+		return true
+	}
+	for _, pt := range policyTypes {
+		if s, ok := pt.(string); ok && s == "Ingress" {
+			return true
+		}
+	}
+	return false
 }
 
 func (a *analysis) inspectIngress(r Record, obj map[string]any) {
