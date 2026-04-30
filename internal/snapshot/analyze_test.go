@@ -340,6 +340,54 @@ func TestAnalyze_DiskPressureNode_Detected(t *testing.T) {
 	}
 }
 
+func TestAnalyze_PIDPressureNode_Detected(t *testing.T) {
+	node := makeNodeRecord("node-pid", map[string]any{
+		"status": map[string]any{
+			"conditions": []any{
+				map[string]any{
+					"type":   "PIDPressure",
+					"status": "True",
+					"reason": "KubeletHasInsufficientPID",
+				},
+			},
+		},
+	})
+	out, err := Analyze(bundleFromRecords([]Record{node}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out, "PIDPressure") {
+		t.Error("expected PIDPressure in node issues")
+	}
+	if !strings.Contains(out, "KubeletHasInsufficientPID") {
+		t.Error("expected reason in node issue")
+	}
+}
+
+func TestAnalyze_NetworkUnavailableNode_Detected(t *testing.T) {
+	node := makeNodeRecord("node-net", map[string]any{
+		"status": map[string]any{
+			"conditions": []any{
+				map[string]any{
+					"type":   "NetworkUnavailable",
+					"status": "True",
+					"reason": "NoRouteCreated",
+				},
+			},
+		},
+	})
+	out, err := Analyze(bundleFromRecords([]Record{node}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out, "NetworkUnavailable") {
+		t.Error("expected NetworkUnavailable in node issues")
+	}
+	if !strings.Contains(out, "NoRouteCreated") {
+		t.Error("expected reason in node issue")
+	}
+}
+
 func TestAnalyze_NodeNotReady_Detected(t *testing.T) {
 	node := makeNodeRecord("node3", map[string]any{
 		"status": map[string]any{
