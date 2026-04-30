@@ -50,6 +50,7 @@ type analysis struct {
 	serviceSet         map[string]bool // namespace/name → true, for ingress backend lookup
 	nsHasIngressNetpol map[string]bool // namespace → true if any NetworkPolicy applies to Ingress
 	nsActivePodCount   map[string]int  // namespace → count of non-job, non-succeeded pods
+	eventCutoff        time.Time       // events with timestamps older than this are skipped (zero = no filter)
 }
 
 func Analyze(bundle *Bundle) (string, error) {
@@ -61,7 +62,8 @@ type AnalyzeOptions struct {
 	MinSeverity       string
 	HideResourceMix   bool
 	HideWarningEvents bool
-	OutputFormat      string // "text" (default) or "json"
+	OutputFormat      string        // "text" (default) or "json"
+	Since             time.Duration // when >0, drop events older than (CapturedAt - Since)
 }
 
 func AnalyzeWithOptions(bundle *Bundle, opts AnalyzeOptions) (string, error) {
@@ -80,6 +82,10 @@ func AnalyzeWithOptions(bundle *Bundle, opts AnalyzeOptions) (string, error) {
 		serviceSet:         make(map[string]bool),
 		nsHasIngressNetpol: make(map[string]bool),
 		nsActivePodCount:   make(map[string]int),
+	}
+
+	if opts.Since > 0 {
+		a.eventCutoff = bundle.Metadata.CapturedAt.Add(-opts.Since)
 	}
 
 	// Pre-pass: build cross-reference indexes used by inspectors that need
@@ -397,6 +403,12 @@ func (a *analysis) inspectNode(r Record, obj map[string]any) {
 }
 
 func (a *analysis) inspectEvent(r Record, obj map[string]any) {
+	if !a.eventCutoff.IsZero() {
+		ts := getEventTimestamp(obj)
+		if !ts.IsZero() && ts.Before(a.eventCutoff) {
+			return
+		}
+	}
 	eventType := strings.ToUpper(getString(obj, "type"))
 	if eventType == "WARNING" {
 		reason := getString(obj, "reason")
@@ -407,6 +419,20 @@ func (a *analysis) inspectEvent(r Record, obj map[string]any) {
 	if eventType != "NORMAL" {
 		a.unknownEventLevels++
 	}
+}
+
+// getEventTimestamp extracts the most relevant timestamp from a Kubernetes
+// Event object. Tries lastTimestamp, then eventTime, then firstTimestamp.
+// Returns zero time if none parse cleanly.
+func getEventTimestamp(obj map[string]any) time.Time {
+	for _, field := range []string{"lastTimestamp", "eventTime", "firstTimestamp"} {
+		if s := getString(obj, field); s != "" {
+			if t, err := time.Parse(time.RFC3339, s); err == nil {
+				return t
+			}
+		}
+	}
+	return time.Time{}
 }
 
 func (a *analysis) inspectDeployment(r Record, obj map[string]any) {

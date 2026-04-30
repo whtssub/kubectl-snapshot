@@ -1404,6 +1404,99 @@ func TestComputeIncidentScore_WorkloadPushesToMedium(t *testing.T) {
 	}
 }
 
+// --- --since duration filter ---
+
+func makeEventRecordWithTimestamp(namespace, name, eventType, reason, msg, lastTimestamp string) Record {
+	return Record{
+		Group:     "",
+		Version:   "v1",
+		Resource:  "events",
+		Namespace: namespace,
+		Name:      name,
+		Object: map[string]any{
+			"type":          eventType,
+			"reason":        reason,
+			"message":       msg,
+			"lastTimestamp": lastTimestamp,
+		},
+	}
+}
+
+func TestAnalyze_Since_RecentEventIncluded(t *testing.T) {
+	captured := time.Now().UTC()
+	recent := captured.Add(-30 * time.Minute).Format(time.RFC3339)
+	ev := makeEventRecordWithTimestamp("default", "ev1", "Warning", "BackOff", "recent event", recent)
+
+	bundle := &Bundle{
+		Metadata: Metadata{CapturedAt: captured, ClusterHint: "test"},
+		Records:  []Record{ev},
+	}
+	out, err := AnalyzeWithOptions(bundle, AnalyzeOptions{Since: time.Hour})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out, "recent event") {
+		t.Errorf("event within --since window should be included, got:\n%s", out)
+	}
+}
+
+func TestAnalyze_Since_OldEventDropped(t *testing.T) {
+	captured := time.Now().UTC()
+	old := captured.Add(-3 * time.Hour).Format(time.RFC3339)
+	ev := makeEventRecordWithTimestamp("default", "ev1", "Warning", "BackOff", "stale event", old)
+
+	bundle := &Bundle{
+		Metadata: Metadata{CapturedAt: captured, ClusterHint: "test"},
+		Records:  []Record{ev},
+	}
+	out, err := AnalyzeWithOptions(bundle, AnalyzeOptions{Since: time.Hour})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(out, "stale event") {
+		t.Errorf("event older than --since should be dropped, got:\n%s", out)
+	}
+	if !strings.Contains(out, "Warning events:     0") {
+		t.Errorf("expected warning event count = 0 after filter, got:\n%s", out)
+	}
+}
+
+func TestAnalyze_Since_ZeroDurationDoesNothing(t *testing.T) {
+	captured := time.Now().UTC()
+	old := captured.Add(-100 * time.Hour).Format(time.RFC3339)
+	ev := makeEventRecordWithTimestamp("default", "ev1", "Warning", "BackOff", "very old", old)
+
+	bundle := &Bundle{
+		Metadata: Metadata{CapturedAt: captured, ClusterHint: "test"},
+		Records:  []Record{ev},
+	}
+	out, err := AnalyzeWithOptions(bundle, AnalyzeOptions{Since: 0})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out, "very old") {
+		t.Error("Since=0 should not filter; event should appear")
+	}
+}
+
+func TestAnalyze_Since_EventWithoutTimestamp_NotDropped(t *testing.T) {
+	// Events without timestamps shouldn't be silently dropped — keep them visible.
+	captured := time.Now().UTC()
+	ev := makeEventRecord("default", "ev1", "Warning", "BackOff", "untimed")
+
+	bundle := &Bundle{
+		Metadata: Metadata{CapturedAt: captured, ClusterHint: "test"},
+		Records:  []Record{ev},
+	}
+	out, err := AnalyzeWithOptions(bundle, AnalyzeOptions{Since: time.Hour})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out, "untimed") {
+		t.Error("event without timestamp should not be filtered out")
+	}
+}
+
 // --- JSON output format ---
 
 func TestAnalyze_JSONOutput_ValidJSON(t *testing.T) {
