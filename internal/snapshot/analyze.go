@@ -1,11 +1,42 @@
 package snapshot
 
 import (
+	"encoding/json"
 	"fmt"
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 )
+
+// AnalysisResult is the structured form of an analysis report. Used for
+// JSON output via `--output json`.
+type AnalysisResult struct {
+	Metadata       AnalysisMetadata `json:"metadata"`
+	Incident       IncidentScore    `json:"incident"`
+	Filtered       bool             `json:"filtered,omitempty"`
+	FilterReason   string           `json:"filterReason,omitempty"`
+	PodIssues      []string         `json:"podIssues"`
+	NodeIssues     []string         `json:"nodeIssues"`
+	WorkloadIssues []string         `json:"workloadIssues"`
+	StorageIssues  []string         `json:"storageIssues"`
+	WarningEvents  []string         `json:"warningEvents,omitempty"`
+	ResourceCounts map[string]int   `json:"resourceCounts,omitempty"`
+}
+
+type AnalysisMetadata struct {
+	CapturedAt        time.Time `json:"capturedAt"`
+	ClusterContext    string    `json:"clusterContext,omitempty"`
+	TotalRecords      int       `json:"totalRecords"`
+	TotalRestarts     int       `json:"totalRestarts"`
+	WarningEventCount int       `json:"warningEventCount"`
+	NonNormalEvents   int       `json:"nonNormalEvents,omitempty"`
+}
+
+type IncidentScore struct {
+	Score    int    `json:"score"`
+	Severity string `json:"severity"`
+}
 
 type analysis struct {
 	podIssues          []string
@@ -30,6 +61,7 @@ type AnalyzeOptions struct {
 	MinSeverity       string
 	HideResourceMix   bool
 	HideWarningEvents bool
+	OutputFormat      string // "text" (default) or "json"
 }
 
 func AnalyzeWithOptions(bundle *Bundle, opts AnalyzeOptions) (string, error) {
@@ -119,6 +151,19 @@ func AnalyzeWithOptions(bundle *Bundle, opts AnalyzeOptions) (string, error) {
 	sort.Strings(a.workloadIssues)
 	sort.Strings(a.storageIssues)
 
+	cappedRestarts := a.totalRestarts
+	if cappedRestarts > 50 {
+		cappedRestarts = 50
+	}
+	score, severity := computeIncidentScoreAndSeverity(
+		len(a.podIssues), len(a.nodeIssues), len(a.warningEvents),
+		cappedRestarts, len(a.workloadIssues), len(a.storageIssues),
+	)
+
+	if strings.ToLower(strings.TrimSpace(opts.OutputFormat)) == "json" {
+		return renderJSON(bundle, a, score, severity, opts)
+	}
+
 	var sb strings.Builder
 	sb.WriteString(clr(ansiBold, "📸 Snapshot Incident Analysis"))
 	sb.WriteByte('\n')
@@ -131,14 +176,6 @@ func AnalyzeWithOptions(bundle *Bundle, opts AnalyzeOptions) (string, error) {
 	sb.WriteString(fmt.Sprintf("Warning events:     %d\n", len(a.warningEvents)))
 	sb.WriteString(fmt.Sprintf("Non-normal events:  %d\n\n", a.unknownEventLevels))
 
-	cappedRestarts := a.totalRestarts
-	if cappedRestarts > 50 {
-		cappedRestarts = 50
-	}
-	score, severity := computeIncidentScoreAndSeverity(
-		len(a.podIssues), len(a.nodeIssues), len(a.warningEvents),
-		cappedRestarts, len(a.workloadIssues), len(a.storageIssues),
-	)
 	if belowSeverityThreshold(severity, opts.MinSeverity) {
 		sb.WriteString("Result: below configured severity threshold\n")
 		sb.WriteString(fmt.Sprintf("- current severity: %s\n", severity))
@@ -166,6 +203,54 @@ func AnalyzeWithOptions(bundle *Bundle, opts AnalyzeOptions) (string, error) {
 		writeSection(&sb, "WARNING EVENTS", a.warningEvents, displayLimit)
 	}
 	return sb.String(), nil
+}
+
+func renderJSON(bundle *Bundle, a *analysis, score int, severity string, opts AnalyzeOptions) (string, error) {
+	result := AnalysisResult{
+		Metadata: AnalysisMetadata{
+			CapturedAt:        bundle.Metadata.CapturedAt,
+			ClusterContext:    bundle.Metadata.ClusterHint,
+			TotalRecords:      len(bundle.Records),
+			TotalRestarts:     a.totalRestarts,
+			WarningEventCount: len(a.warningEvents),
+			NonNormalEvents:   a.unknownEventLevels,
+		},
+		Incident:       IncidentScore{Score: score, Severity: severity},
+		PodIssues:      ensureSlice(a.podIssues),
+		NodeIssues:     ensureSlice(a.nodeIssues),
+		WorkloadIssues: ensureSlice(a.workloadIssues),
+		StorageIssues:  ensureSlice(a.storageIssues),
+	}
+	if !opts.HideWarningEvents {
+		result.WarningEvents = ensureSlice(a.warningEvents)
+	}
+	if !opts.HideResourceMix {
+		result.ResourceCounts = a.resourceCounts
+	}
+	if belowSeverityThreshold(severity, opts.MinSeverity) {
+		result.Filtered = true
+		result.FilterReason = fmt.Sprintf("below configured severity threshold %s", strings.ToUpper(strings.TrimSpace(opts.MinSeverity)))
+		result.PodIssues = []string{}
+		result.NodeIssues = []string{}
+		result.WorkloadIssues = []string{}
+		result.StorageIssues = []string{}
+		result.WarningEvents = nil
+		result.ResourceCounts = nil
+	}
+	b, err := json.MarshalIndent(result, "", "  ")
+	if err != nil {
+		return "", fmt.Errorf("marshal analysis result: %w", err)
+	}
+	return string(b) + "\n", nil
+}
+
+// ensureSlice returns an empty slice instead of nil so JSON output is
+// always `[]` rather than `null` for empty issue categories.
+func ensureSlice(s []string) []string {
+	if s == nil {
+		return []string{}
+	}
+	return s
 }
 
 func computeIncidentScoreAndSeverity(podIssues, nodeIssues, warnings, restarts, workloadIssues, storageIssues int) (int, string) {

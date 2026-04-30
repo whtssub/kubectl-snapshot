@@ -1,6 +1,7 @@
 package snapshot
 
 import (
+	"encoding/json"
 	"strings"
 	"testing"
 	"time"
@@ -1400,6 +1401,121 @@ func TestComputeIncidentScore_WorkloadPushesToMedium(t *testing.T) {
 	}
 	if severity != "MEDIUM" {
 		t.Errorf("expected MEDIUM, got %s", severity)
+	}
+}
+
+// --- JSON output format ---
+
+func TestAnalyze_JSONOutput_ValidJSON(t *testing.T) {
+	pod := makePodRecord("default", "broken", map[string]any{
+		"status": map[string]any{"phase": "Failed"},
+	})
+	out, err := AnalyzeWithOptions(bundleFromRecords([]Record{pod}), AnalyzeOptions{
+		OutputFormat: "json",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var result AnalysisResult
+	if err := json.Unmarshal([]byte(out), &result); err != nil {
+		t.Fatalf("output is not valid JSON: %v\noutput:\n%s", err, out)
+	}
+	if result.Incident.Severity == "" {
+		t.Error("expected non-empty severity in JSON output")
+	}
+}
+
+func TestAnalyze_JSONOutput_ContainsIssues(t *testing.T) {
+	pod := makePodRecord("default", "crasher", map[string]any{
+		"status": map[string]any{"phase": "Failed"},
+	})
+	out, err := AnalyzeWithOptions(bundleFromRecords([]Record{pod}), AnalyzeOptions{
+		OutputFormat: "json",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var result AnalysisResult
+	if err := json.Unmarshal([]byte(out), &result); err != nil {
+		t.Fatal(err)
+	}
+	if len(result.PodIssues) == 0 {
+		t.Error("expected pod issues in JSON output")
+	}
+	found := false
+	for _, issue := range result.PodIssues {
+		if strings.Contains(issue, "phase=Failed") {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Errorf("expected phase=Failed in pod issues, got: %v", result.PodIssues)
+	}
+}
+
+func TestAnalyze_JSONOutput_EmptyArraysNotNull(t *testing.T) {
+	out, err := AnalyzeWithOptions(bundleFromRecords([]Record{}), AnalyzeOptions{
+		OutputFormat: "json",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Empty issue lists must serialize as [] not null
+	if strings.Contains(out, `"podIssues": null`) {
+		t.Error("podIssues should be [] not null")
+	}
+	if strings.Contains(out, `"nodeIssues": null`) {
+		t.Error("nodeIssues should be [] not null")
+	}
+}
+
+func TestAnalyze_JSONOutput_HonorsHideResourceMix(t *testing.T) {
+	pod := makePodRecord("default", "p", map[string]any{"status": map[string]any{"phase": "Running"}})
+	out, err := AnalyzeWithOptions(bundleFromRecords([]Record{pod}), AnalyzeOptions{
+		OutputFormat:    "json",
+		HideResourceMix: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(out, `"resourceCounts"`) {
+		t.Error("resourceCounts should be omitted when HideResourceMix is true")
+	}
+}
+
+func TestAnalyze_JSONOutput_BelowThresholdMarkedFiltered(t *testing.T) {
+	out, err := AnalyzeWithOptions(bundleFromRecords([]Record{}), AnalyzeOptions{
+		OutputFormat: "json",
+		MinSeverity:  "medium",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var result AnalysisResult
+	if err := json.Unmarshal([]byte(out), &result); err != nil {
+		t.Fatal(err)
+	}
+	if !result.Filtered {
+		t.Error("expected filtered=true when below severity threshold")
+	}
+	if !strings.Contains(result.FilterReason, "MEDIUM") {
+		t.Errorf("expected filter reason to mention threshold, got: %q", result.FilterReason)
+	}
+}
+
+func TestAnalyze_JSONOutput_TextDefaultUnchanged(t *testing.T) {
+	pod := makePodRecord("default", "p", map[string]any{"status": map[string]any{"phase": "Failed"}})
+	out, err := AnalyzeWithOptions(bundleFromRecords([]Record{pod}), AnalyzeOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Should be text output (default), not JSON
+	if strings.HasPrefix(strings.TrimSpace(out), "{") {
+		t.Errorf("default output should be text, not JSON; got:\n%s", out)
+	}
+	if !strings.Contains(out, "Snapshot Incident Analysis") {
+		t.Error("expected text header in default output")
 	}
 }
 

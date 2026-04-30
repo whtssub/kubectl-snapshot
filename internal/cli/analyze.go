@@ -12,6 +12,7 @@ func newAnalyzeCommand() *cobra.Command {
 	var minSeverity string
 	var hideResourceMix bool
 	var hideWarningEvents bool
+	var outputFormat string
 
 	cmd := &cobra.Command{
 		Use:   "analyze <snapshot.json>",
@@ -28,6 +29,7 @@ func newAnalyzeCommand() *cobra.Command {
 				MinSeverity:       minSeverity,
 				HideResourceMix:   hideResourceMix,
 				HideWarningEvents: hideWarningEvents,
+				OutputFormat:      outputFormat,
 			})
 			if err != nil {
 				return err
@@ -40,5 +42,6 @@ func newAnalyzeCommand() *cobra.Command {
 	cmd.Flags().StringVar(&minSeverity, "severity-threshold", "", "Only print details when severity is at least: low|medium|high")
 	cmd.Flags().BoolVar(&hideResourceMix, "no-resource-mix", false, "Hide resource mix section")
 	cmd.Flags().BoolVar(&hideWarningEvents, "no-warning-events", false, "Hide warning events section")
+	cmd.Flags().StringVar(&outputFormat, "output", "text", "Output format: text (default) or json")
 	return cmd
 }
