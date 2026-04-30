@@ -1,11 +1,42 @@
 package snapshot
 
 import (
+	"encoding/json"
 	"fmt"
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 )
+
+// AnalysisResult is the structured form of an analysis report. Used for
+// JSON output via `--output json`.
+type AnalysisResult struct {
+	Metadata       AnalysisMetadata `json:"metadata"`
+	Incident       IncidentScore    `json:"incident"`
+	Filtered       bool             `json:"filtered,omitempty"`
+	FilterReason   string           `json:"filterReason,omitempty"`
+	PodIssues      []string         `json:"podIssues"`
+	NodeIssues     []string         `json:"nodeIssues"`
+	WorkloadIssues []string         `json:"workloadIssues"`
+	StorageIssues  []string         `json:"storageIssues"`
+	WarningEvents  []string         `json:"warningEvents,omitempty"`
+	ResourceCounts map[string]int   `json:"resourceCounts,omitempty"`
+}
+
+type AnalysisMetadata struct {
+	CapturedAt        time.Time `json:"capturedAt"`
+	ClusterContext    string    `json:"clusterContext,omitempty"`
+	TotalRecords      int       `json:"totalRecords"`
+	TotalRestarts     int       `json:"totalRestarts"`
+	WarningEventCount int       `json:"warningEventCount"`
+	NonNormalEvents   int       `json:"nonNormalEvents,omitempty"`
+}
+
+type IncidentScore struct {
+	Score    int    `json:"score"`
+	Severity string `json:"severity"`
+}
 
 type analysis struct {
 	podIssues          []string
@@ -16,6 +47,10 @@ type analysis struct {
 	totalRestarts      int
 	unknownEventLevels int
 	resourceCounts     map[string]int
+	serviceSet         map[string]bool // namespace/name → true, for ingress backend lookup
+	nsHasIngressNetpol map[string]bool // namespace → true if any NetworkPolicy applies to Ingress
+	nsActivePodCount   map[string]int  // namespace → count of non-job, non-succeeded pods
+	eventCutoff        time.Time       // events with timestamps older than this are skipped (zero = no filter)
 }
 
 func Analyze(bundle *Bundle) (string, error) {
@@ -27,6 +62,8 @@ type AnalyzeOptions struct {
 	MinSeverity       string
 	HideResourceMix   bool
 	HideWarningEvents bool
+	OutputFormat      string        // "text" (default) or "json"
+	Since             time.Duration // when >0, drop events older than (CapturedAt - Since)
 }
 
 func AnalyzeWithOptions(bundle *Bundle, opts AnalyzeOptions) (string, error) {
@@ -41,7 +78,39 @@ func AnalyzeWithOptions(bundle *Bundle, opts AnalyzeOptions) (string, error) {
 		warningEvents:  make([]string, 0),
 		workloadIssues: make([]string, 0),
 		storageIssues:  make([]string, 0),
-		resourceCounts: make(map[string]int),
+		resourceCounts:     make(map[string]int),
+		serviceSet:         make(map[string]bool),
+		nsHasIngressNetpol: make(map[string]bool),
+		nsActivePodCount:   make(map[string]int),
+	}
+
+	if opts.Since > 0 {
+		a.eventCutoff = bundle.Metadata.CapturedAt.Add(-opts.Since)
+	}
+
+	// Pre-pass: build cross-reference indexes used by inspectors that need
+	// to look across record types (e.g. ingress→service, pod→networkpolicy).
+	for _, r := range bundle.Records {
+		obj, ok := r.Object.(map[string]any)
+		if !ok {
+			continue
+		}
+		switch r.Resource {
+		case "services":
+			a.serviceSet[namespacedName(r.Namespace, r.Name)] = true
+		case "networkpolicies":
+			if hasIngressPolicyType(obj) {
+				a.nsHasIngressNetpol[r.Namespace] = true
+			}
+		case "pods":
+			if isJobPod(obj) {
+				continue
+			}
+			if getString(getMap(obj, "status"), "phase") == "Succeeded" {
+				continue
+			}
+			a.nsActivePodCount[r.Namespace]++
+		}
 	}
 
 	for _, r := range bundle.Records {
@@ -75,14 +144,31 @@ func AnalyzeWithOptions(bundle *Bundle, opts AnalyzeOptions) (string, error) {
 			a.inspectJob(r, obj)
 		case "cronjobs":
 			a.inspectCronJob(r, obj)
+		case "ingresses":
+			a.inspectIngress(r, obj)
 		}
 	}
+
+	a.detectNetworkPolicyGaps()
 
 	sort.Strings(a.podIssues)
 	sort.Strings(a.nodeIssues)
 	sort.Strings(a.warningEvents)
 	sort.Strings(a.workloadIssues)
 	sort.Strings(a.storageIssues)
+
+	cappedRestarts := a.totalRestarts
+	if cappedRestarts > 50 {
+		cappedRestarts = 50
+	}
+	score, severity := computeIncidentScoreAndSeverity(
+		len(a.podIssues), len(a.nodeIssues), len(a.warningEvents),
+		cappedRestarts, len(a.workloadIssues), len(a.storageIssues),
+	)
+
+	if strings.ToLower(strings.TrimSpace(opts.OutputFormat)) == "json" {
+		return renderJSON(bundle, a, score, severity, opts)
+	}
 
 	var sb strings.Builder
 	sb.WriteString(clr(ansiBold, "📸 Snapshot Incident Analysis"))
@@ -96,14 +182,6 @@ func AnalyzeWithOptions(bundle *Bundle, opts AnalyzeOptions) (string, error) {
 	sb.WriteString(fmt.Sprintf("Warning events:     %d\n", len(a.warningEvents)))
 	sb.WriteString(fmt.Sprintf("Non-normal events:  %d\n\n", a.unknownEventLevels))
 
-	cappedRestarts := a.totalRestarts
-	if cappedRestarts > 50 {
-		cappedRestarts = 50
-	}
-	score, severity := computeIncidentScoreAndSeverity(
-		len(a.podIssues), len(a.nodeIssues), len(a.warningEvents),
-		cappedRestarts, len(a.workloadIssues), len(a.storageIssues),
-	)
 	if belowSeverityThreshold(severity, opts.MinSeverity) {
 		sb.WriteString("Result: below configured severity threshold\n")
 		sb.WriteString(fmt.Sprintf("- current severity: %s\n", severity))
@@ -131,6 +209,54 @@ func AnalyzeWithOptions(bundle *Bundle, opts AnalyzeOptions) (string, error) {
 		writeSection(&sb, "WARNING EVENTS", a.warningEvents, displayLimit)
 	}
 	return sb.String(), nil
+}
+
+func renderJSON(bundle *Bundle, a *analysis, score int, severity string, opts AnalyzeOptions) (string, error) {
+	result := AnalysisResult{
+		Metadata: AnalysisMetadata{
+			CapturedAt:        bundle.Metadata.CapturedAt,
+			ClusterContext:    bundle.Metadata.ClusterHint,
+			TotalRecords:      len(bundle.Records),
+			TotalRestarts:     a.totalRestarts,
+			WarningEventCount: len(a.warningEvents),
+			NonNormalEvents:   a.unknownEventLevels,
+		},
+		Incident:       IncidentScore{Score: score, Severity: severity},
+		PodIssues:      ensureSlice(a.podIssues),
+		NodeIssues:     ensureSlice(a.nodeIssues),
+		WorkloadIssues: ensureSlice(a.workloadIssues),
+		StorageIssues:  ensureSlice(a.storageIssues),
+	}
+	if !opts.HideWarningEvents {
+		result.WarningEvents = ensureSlice(a.warningEvents)
+	}
+	if !opts.HideResourceMix {
+		result.ResourceCounts = a.resourceCounts
+	}
+	if belowSeverityThreshold(severity, opts.MinSeverity) {
+		result.Filtered = true
+		result.FilterReason = fmt.Sprintf("below configured severity threshold %s", strings.ToUpper(strings.TrimSpace(opts.MinSeverity)))
+		result.PodIssues = []string{}
+		result.NodeIssues = []string{}
+		result.WorkloadIssues = []string{}
+		result.StorageIssues = []string{}
+		result.WarningEvents = nil
+		result.ResourceCounts = nil
+	}
+	b, err := json.MarshalIndent(result, "", "  ")
+	if err != nil {
+		return "", fmt.Errorf("marshal analysis result: %w", err)
+	}
+	return string(b) + "\n", nil
+}
+
+// ensureSlice returns an empty slice instead of nil so JSON output is
+// always `[]` rather than `null` for empty issue categories.
+func ensureSlice(s []string) []string {
+	if s == nil {
+		return []string{}
+	}
+	return s
 }
 
 func computeIncidentScoreAndSeverity(podIssues, nodeIssues, warnings, restarts, workloadIssues, storageIssues int) (int, string) {
@@ -277,6 +403,12 @@ func (a *analysis) inspectNode(r Record, obj map[string]any) {
 }
 
 func (a *analysis) inspectEvent(r Record, obj map[string]any) {
+	if !a.eventCutoff.IsZero() {
+		ts := getEventTimestamp(obj)
+		if !ts.IsZero() && ts.Before(a.eventCutoff) {
+			return
+		}
+	}
 	eventType := strings.ToUpper(getString(obj, "type"))
 	if eventType == "WARNING" {
 		reason := getString(obj, "reason")
@@ -287,6 +419,20 @@ func (a *analysis) inspectEvent(r Record, obj map[string]any) {
 	if eventType != "NORMAL" {
 		a.unknownEventLevels++
 	}
+}
+
+// getEventTimestamp extracts the most relevant timestamp from a Kubernetes
+// Event object. Tries lastTimestamp, then eventTime, then firstTimestamp.
+// Returns zero time if none parse cleanly.
+func getEventTimestamp(obj map[string]any) time.Time {
+	for _, field := range []string{"lastTimestamp", "eventTime", "firstTimestamp"} {
+		if s := getString(obj, field); s != "" {
+			if t, err := time.Parse(time.RFC3339, s); err == nil {
+				return t
+			}
+		}
+	}
+	return time.Time{}
 }
 
 func (a *analysis) inspectDeployment(r Record, obj map[string]any) {
@@ -391,6 +537,80 @@ func (a *analysis) inspectHPA(r Record, obj map[string]any) {
 		if getString(cm, "type") == "AbleToScale" && getString(cm, "status") == "False" {
 			a.workloadIssues = append(a.workloadIssues,
 				fmt.Sprintf("[HPA] %s scale-blocked reason=%s", nsName, getString(cm, "reason")))
+		}
+	}
+}
+
+func (a *analysis) detectNetworkPolicyGaps() {
+	for ns, count := range a.nsActivePodCount {
+		if count == 0 || a.nsHasIngressNetpol[ns] {
+			continue
+		}
+		a.workloadIssues = append(a.workloadIssues,
+			fmt.Sprintf("[NETPOL] %s no-ingress-policy %d pods exposed (implicit allow-all)", ns, count))
+	}
+}
+
+// hasIngressPolicyType reports whether a NetworkPolicy object applies to
+// ingress traffic. A policy applies to Ingress when its policyTypes list
+// contains "Ingress" or when policyTypes is unset (per spec, the default
+// is ["Ingress"]).
+func hasIngressPolicyType(policy map[string]any) bool {
+	policyTypes := getSlice(getMap(policy, "spec"), "policyTypes")
+	if len(policyTypes) == 0 {
+		return true
+	}
+	for _, pt := range policyTypes {
+		if s, ok := pt.(string); ok && s == "Ingress" {
+			return true
+		}
+	}
+	return false
+}
+
+func (a *analysis) inspectIngress(r Record, obj map[string]any) {
+	nsName := namespacedName(r.Namespace, r.Name)
+	spec := getMap(obj, "spec")
+	seen := make(map[string]bool)
+
+	check := func(svcName, location string) {
+		if svcName == "" {
+			return
+		}
+		if a.serviceSet[r.Namespace+"/"+svcName] {
+			return
+		}
+		signal := fmt.Sprintf("[INGRESS] %s %s missing-service=%s", nsName, location, svcName)
+		if seen[signal] {
+			return
+		}
+		seen[signal] = true
+		a.workloadIssues = append(a.workloadIssues, signal)
+	}
+
+	if defaultBackend := getMap(spec, "defaultBackend"); len(defaultBackend) > 0 {
+		svc := getMap(defaultBackend, "service")
+		check(getString(svc, "name"), "default-backend")
+	}
+
+	for _, rule := range getSlice(spec, "rules") {
+		ruleMap, ok := rule.(map[string]any)
+		if !ok {
+			continue
+		}
+		http := getMap(ruleMap, "http")
+		for _, p := range getSlice(http, "paths") {
+			pathMap, ok := p.(map[string]any)
+			if !ok {
+				continue
+			}
+			backend := getMap(pathMap, "backend")
+			svc := getMap(backend, "service")
+			pathStr := getString(pathMap, "path")
+			if pathStr == "" {
+				pathStr = "/"
+			}
+			check(getString(svc, "name"), "path="+pathStr)
 		}
 	}
 }

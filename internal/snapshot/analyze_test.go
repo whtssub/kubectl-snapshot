@@ -1,6 +1,7 @@
 package snapshot
 
 import (
+	"encoding/json"
 	"strings"
 	"testing"
 	"time"
@@ -225,9 +226,9 @@ func TestAnalyze_RestartsCapped_ScoreNotInflated(t *testing.T) {
 	if !strings.Contains(out, "Total restarts:     200") {
 		t.Error("raw restart count should display uncapped")
 	}
-	// 1 pod issue (restarts>0) * 3 + capped restarts 50 = 53
-	if !strings.Contains(out, "score:    53") {
-		t.Errorf("score should be 53 (capped restarts), got:\n%s", out)
+	// 1 pod issue * 3 + 1 workload issue (netpol gap in default ns) * 3 + capped restarts 50 = 56
+	if !strings.Contains(out, "score:    56") {
+		t.Errorf("score should be 56 (capped restarts + netpol gap), got:\n%s", out)
 	}
 }
 
@@ -336,6 +337,54 @@ func TestAnalyze_DiskPressureNode_Detected(t *testing.T) {
 	}
 	if !strings.Contains(out, "DiskPressure") {
 		t.Error("expected DiskPressure in node issues")
+	}
+}
+
+func TestAnalyze_PIDPressureNode_Detected(t *testing.T) {
+	node := makeNodeRecord("node-pid", map[string]any{
+		"status": map[string]any{
+			"conditions": []any{
+				map[string]any{
+					"type":   "PIDPressure",
+					"status": "True",
+					"reason": "KubeletHasInsufficientPID",
+				},
+			},
+		},
+	})
+	out, err := Analyze(bundleFromRecords([]Record{node}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out, "PIDPressure") {
+		t.Error("expected PIDPressure in node issues")
+	}
+	if !strings.Contains(out, "KubeletHasInsufficientPID") {
+		t.Error("expected reason in node issue")
+	}
+}
+
+func TestAnalyze_NetworkUnavailableNode_Detected(t *testing.T) {
+	node := makeNodeRecord("node-net", map[string]any{
+		"status": map[string]any{
+			"conditions": []any{
+				map[string]any{
+					"type":   "NetworkUnavailable",
+					"status": "True",
+					"reason": "NoRouteCreated",
+				},
+			},
+		},
+	})
+	out, err := Analyze(bundleFromRecords([]Record{node}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out, "NetworkUnavailable") {
+		t.Error("expected NetworkUnavailable in node issues")
+	}
+	if !strings.Contains(out, "NoRouteCreated") {
+		t.Error("expected reason in node issue")
 	}
 }
 
@@ -931,6 +980,271 @@ func TestAnalyze_HPA_Healthy_NotReported(t *testing.T) {
 	}
 }
 
+func makeIngressRecord(namespace, name string, obj map[string]any) Record {
+	return Record{Group: "networking.k8s.io", Version: "v1", Resource: "ingresses", Namespace: namespace, Name: name, Object: obj}
+}
+
+func makeServiceRecord(namespace, name string) Record {
+	return Record{Group: "", Version: "v1", Resource: "services", Namespace: namespace, Name: name, Object: map[string]any{}}
+}
+
+// --- Ingress analysis ---
+
+func TestAnalyze_Ingress_BackendServiceExists_NotFlagged(t *testing.T) {
+	svc := makeServiceRecord("default", "my-app")
+	ing := makeIngressRecord("default", "app-ingress", map[string]any{
+		"spec": map[string]any{
+			"rules": []any{
+				map[string]any{
+					"host": "example.com",
+					"http": map[string]any{
+						"paths": []any{
+							map[string]any{
+								"path":    "/",
+								"backend": map[string]any{"service": map[string]any{"name": "my-app"}},
+							},
+						},
+					},
+				},
+			},
+		},
+	})
+	out, err := Analyze(bundleFromRecords([]Record{svc, ing}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(out, "[INGRESS]") {
+		t.Errorf("ingress with valid backend should not be flagged, got:\n%s", out)
+	}
+}
+
+func TestAnalyze_Ingress_MissingBackendService_Flagged(t *testing.T) {
+	ing := makeIngressRecord("default", "broken", map[string]any{
+		"spec": map[string]any{
+			"rules": []any{
+				map[string]any{
+					"host": "example.com",
+					"http": map[string]any{
+						"paths": []any{
+							map[string]any{
+								"path":    "/api",
+								"backend": map[string]any{"service": map[string]any{"name": "ghost-service"}},
+							},
+						},
+					},
+				},
+			},
+		},
+	})
+	out, err := Analyze(bundleFromRecords([]Record{ing}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out, "[INGRESS]") {
+		t.Error("expected [INGRESS] signal")
+	}
+	if !strings.Contains(out, "missing-service=ghost-service") {
+		t.Errorf("expected missing-service=ghost-service, got:\n%s", out)
+	}
+	if !strings.Contains(out, "path=/api") {
+		t.Errorf("expected path=/api in signal, got:\n%s", out)
+	}
+}
+
+func TestAnalyze_Ingress_MissingDefaultBackend_Flagged(t *testing.T) {
+	ing := makeIngressRecord("default", "default-broken", map[string]any{
+		"spec": map[string]any{
+			"defaultBackend": map[string]any{
+				"service": map[string]any{"name": "absent"},
+			},
+		},
+	})
+	out, err := Analyze(bundleFromRecords([]Record{ing}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out, "default-backend") {
+		t.Error("expected default-backend location in signal")
+	}
+	if !strings.Contains(out, "missing-service=absent") {
+		t.Error("expected missing-service=absent")
+	}
+}
+
+func TestAnalyze_Ingress_CrossNamespaceLookup_NotConfused(t *testing.T) {
+	// Service exists in 'other' namespace; ingress is in 'default'.
+	// Ingress backends are namespace-scoped, so this should still flag.
+	svc := makeServiceRecord("other", "my-app")
+	ing := makeIngressRecord("default", "wrong-ns", map[string]any{
+		"spec": map[string]any{
+			"rules": []any{
+				map[string]any{
+					"http": map[string]any{
+						"paths": []any{
+							map[string]any{
+								"path":    "/",
+								"backend": map[string]any{"service": map[string]any{"name": "my-app"}},
+							},
+						},
+					},
+				},
+			},
+		},
+	})
+	out, err := Analyze(bundleFromRecords([]Record{svc, ing}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out, "missing-service=my-app") {
+		t.Error("ingress backend lookup should be namespace-scoped")
+	}
+}
+
+func TestAnalyze_Ingress_DuplicatePathsToSameMissingService_DedupedSignal(t *testing.T) {
+	ing := makeIngressRecord("default", "many-paths", map[string]any{
+		"spec": map[string]any{
+			"rules": []any{
+				map[string]any{
+					"http": map[string]any{
+						"paths": []any{
+							map[string]any{
+								"path":    "/",
+								"backend": map[string]any{"service": map[string]any{"name": "ghost"}},
+							},
+							map[string]any{
+								"path":    "/",
+								"backend": map[string]any{"service": map[string]any{"name": "ghost"}},
+							},
+						},
+					},
+				},
+			},
+		},
+	})
+	out, err := Analyze(bundleFromRecords([]Record{ing}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	count := strings.Count(out, "missing-service=ghost")
+	if count != 1 {
+		t.Errorf("expected single deduped signal for repeat backend, got %d:\n%s", count, out)
+	}
+}
+
+func makeNetworkPolicyRecord(namespace, name string, obj map[string]any) Record {
+	return Record{Group: "networking.k8s.io", Version: "v1", Resource: "networkpolicies", Namespace: namespace, Name: name, Object: obj}
+}
+
+// --- NetworkPolicy gap detection ---
+
+func TestAnalyze_NamespaceWithoutNetworkPolicy_Flagged(t *testing.T) {
+	pod := makePodRecord("exposed-ns", "my-pod", map[string]any{
+		"status": map[string]any{"phase": "Running"},
+	})
+	out, err := Analyze(bundleFromRecords([]Record{pod}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out, "[NETPOL]") {
+		t.Errorf("expected [NETPOL] signal for namespace without policy, got:\n%s", out)
+	}
+	if !strings.Contains(out, "exposed-ns") {
+		t.Error("expected namespace name in NETPOL signal")
+	}
+	if !strings.Contains(out, "no-ingress-policy") {
+		t.Error("expected no-ingress-policy signal")
+	}
+	if !strings.Contains(out, "1 pods exposed") {
+		t.Errorf("expected pod count in signal, got:\n%s", out)
+	}
+}
+
+func TestAnalyze_NamespaceWithExplicitIngressPolicy_NotFlagged(t *testing.T) {
+	pod := makePodRecord("secure-ns", "my-pod", map[string]any{
+		"status": map[string]any{"phase": "Running"},
+	})
+	np := makeNetworkPolicyRecord("secure-ns", "default-deny", map[string]any{
+		"spec": map[string]any{
+			"podSelector": map[string]any{},
+			"policyTypes": []any{"Ingress"},
+		},
+	})
+	out, err := Analyze(bundleFromRecords([]Record{pod, np}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(out, "[NETPOL]") {
+		t.Errorf("namespace with explicit ingress policy should not be flagged, got:\n%s", out)
+	}
+}
+
+func TestAnalyze_NamespaceWithImplicitIngressDefault_NotFlagged(t *testing.T) {
+	// policyTypes omitted → defaults to ["Ingress"] per spec
+	pod := makePodRecord("implicit-ns", "my-pod", map[string]any{
+		"status": map[string]any{"phase": "Running"},
+	})
+	np := makeNetworkPolicyRecord("implicit-ns", "implicit", map[string]any{
+		"spec": map[string]any{
+			"podSelector": map[string]any{},
+		},
+	})
+	out, err := Analyze(bundleFromRecords([]Record{pod, np}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(out, "[NETPOL]") {
+		t.Errorf("policy without policyTypes defaults to Ingress; should not be flagged, got:\n%s", out)
+	}
+}
+
+func TestAnalyze_NamespaceWithEgressOnlyPolicy_Flagged(t *testing.T) {
+	pod := makePodRecord("egress-only", "my-pod", map[string]any{
+		"status": map[string]any{"phase": "Running"},
+	})
+	np := makeNetworkPolicyRecord("egress-only", "egress-policy", map[string]any{
+		"spec": map[string]any{
+			"podSelector": map[string]any{},
+			"policyTypes": []any{"Egress"},
+		},
+	})
+	out, err := Analyze(bundleFromRecords([]Record{pod, np}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out, "[NETPOL]") {
+		t.Errorf("egress-only policy should not satisfy ingress check, got:\n%s", out)
+	}
+}
+
+func TestAnalyze_SucceededPodsExcludedFromNetpolCount(t *testing.T) {
+	pod := makePodRecord("done-ns", "completed", map[string]any{
+		"status": map[string]any{"phase": "Succeeded"},
+	})
+	out, err := Analyze(bundleFromRecords([]Record{pod}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(out, "[NETPOL]") {
+		t.Errorf("succeeded pods should not contribute to netpol gap count, got:\n%s", out)
+	}
+}
+
+func TestAnalyze_JobPodsExcludedFromNetpolCount(t *testing.T) {
+	pod := makePodRecord("batch-ns", "worker-abc", map[string]any{
+		"metadata": map[string]any{
+			"ownerReferences": []any{map[string]any{"kind": "Job", "name": "etl"}},
+		},
+		"status": map[string]any{"phase": "Failed"},
+	})
+	out, err := Analyze(bundleFromRecords([]Record{pod}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(out, "[NETPOL]") {
+		t.Errorf("job-owned pods should not contribute to netpol gap count, got:\n%s", out)
+	}
+}
+
 func makeJobRecord(namespace, name string, obj map[string]any) Record {
 	return Record{Group: "batch", Version: "v1", Resource: "jobs", Namespace: namespace, Name: name, Object: obj}
 }
@@ -1135,6 +1449,214 @@ func TestComputeIncidentScore_WorkloadPushesToMedium(t *testing.T) {
 	}
 	if severity != "MEDIUM" {
 		t.Errorf("expected MEDIUM, got %s", severity)
+	}
+}
+
+// --- --since duration filter ---
+
+func makeEventRecordWithTimestamp(namespace, name, eventType, reason, msg, lastTimestamp string) Record {
+	return Record{
+		Group:     "",
+		Version:   "v1",
+		Resource:  "events",
+		Namespace: namespace,
+		Name:      name,
+		Object: map[string]any{
+			"type":          eventType,
+			"reason":        reason,
+			"message":       msg,
+			"lastTimestamp": lastTimestamp,
+		},
+	}
+}
+
+func TestAnalyze_Since_RecentEventIncluded(t *testing.T) {
+	captured := time.Now().UTC()
+	recent := captured.Add(-30 * time.Minute).Format(time.RFC3339)
+	ev := makeEventRecordWithTimestamp("default", "ev1", "Warning", "BackOff", "recent event", recent)
+
+	bundle := &Bundle{
+		Metadata: Metadata{CapturedAt: captured, ClusterHint: "test"},
+		Records:  []Record{ev},
+	}
+	out, err := AnalyzeWithOptions(bundle, AnalyzeOptions{Since: time.Hour})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out, "recent event") {
+		t.Errorf("event within --since window should be included, got:\n%s", out)
+	}
+}
+
+func TestAnalyze_Since_OldEventDropped(t *testing.T) {
+	captured := time.Now().UTC()
+	old := captured.Add(-3 * time.Hour).Format(time.RFC3339)
+	ev := makeEventRecordWithTimestamp("default", "ev1", "Warning", "BackOff", "stale event", old)
+
+	bundle := &Bundle{
+		Metadata: Metadata{CapturedAt: captured, ClusterHint: "test"},
+		Records:  []Record{ev},
+	}
+	out, err := AnalyzeWithOptions(bundle, AnalyzeOptions{Since: time.Hour})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(out, "stale event") {
+		t.Errorf("event older than --since should be dropped, got:\n%s", out)
+	}
+	if !strings.Contains(out, "Warning events:     0") {
+		t.Errorf("expected warning event count = 0 after filter, got:\n%s", out)
+	}
+}
+
+func TestAnalyze_Since_ZeroDurationDoesNothing(t *testing.T) {
+	captured := time.Now().UTC()
+	old := captured.Add(-100 * time.Hour).Format(time.RFC3339)
+	ev := makeEventRecordWithTimestamp("default", "ev1", "Warning", "BackOff", "very old", old)
+
+	bundle := &Bundle{
+		Metadata: Metadata{CapturedAt: captured, ClusterHint: "test"},
+		Records:  []Record{ev},
+	}
+	out, err := AnalyzeWithOptions(bundle, AnalyzeOptions{Since: 0})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out, "very old") {
+		t.Error("Since=0 should not filter; event should appear")
+	}
+}
+
+func TestAnalyze_Since_EventWithoutTimestamp_NotDropped(t *testing.T) {
+	// Events without timestamps shouldn't be silently dropped — keep them visible.
+	captured := time.Now().UTC()
+	ev := makeEventRecord("default", "ev1", "Warning", "BackOff", "untimed")
+
+	bundle := &Bundle{
+		Metadata: Metadata{CapturedAt: captured, ClusterHint: "test"},
+		Records:  []Record{ev},
+	}
+	out, err := AnalyzeWithOptions(bundle, AnalyzeOptions{Since: time.Hour})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out, "untimed") {
+		t.Error("event without timestamp should not be filtered out")
+	}
+}
+
+// --- JSON output format ---
+
+func TestAnalyze_JSONOutput_ValidJSON(t *testing.T) {
+	pod := makePodRecord("default", "broken", map[string]any{
+		"status": map[string]any{"phase": "Failed"},
+	})
+	out, err := AnalyzeWithOptions(bundleFromRecords([]Record{pod}), AnalyzeOptions{
+		OutputFormat: "json",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var result AnalysisResult
+	if err := json.Unmarshal([]byte(out), &result); err != nil {
+		t.Fatalf("output is not valid JSON: %v\noutput:\n%s", err, out)
+	}
+	if result.Incident.Severity == "" {
+		t.Error("expected non-empty severity in JSON output")
+	}
+}
+
+func TestAnalyze_JSONOutput_ContainsIssues(t *testing.T) {
+	pod := makePodRecord("default", "crasher", map[string]any{
+		"status": map[string]any{"phase": "Failed"},
+	})
+	out, err := AnalyzeWithOptions(bundleFromRecords([]Record{pod}), AnalyzeOptions{
+		OutputFormat: "json",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var result AnalysisResult
+	if err := json.Unmarshal([]byte(out), &result); err != nil {
+		t.Fatal(err)
+	}
+	if len(result.PodIssues) == 0 {
+		t.Error("expected pod issues in JSON output")
+	}
+	found := false
+	for _, issue := range result.PodIssues {
+		if strings.Contains(issue, "phase=Failed") {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Errorf("expected phase=Failed in pod issues, got: %v", result.PodIssues)
+	}
+}
+
+func TestAnalyze_JSONOutput_EmptyArraysNotNull(t *testing.T) {
+	out, err := AnalyzeWithOptions(bundleFromRecords([]Record{}), AnalyzeOptions{
+		OutputFormat: "json",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Empty issue lists must serialize as [] not null
+	if strings.Contains(out, `"podIssues": null`) {
+		t.Error("podIssues should be [] not null")
+	}
+	if strings.Contains(out, `"nodeIssues": null`) {
+		t.Error("nodeIssues should be [] not null")
+	}
+}
+
+func TestAnalyze_JSONOutput_HonorsHideResourceMix(t *testing.T) {
+	pod := makePodRecord("default", "p", map[string]any{"status": map[string]any{"phase": "Running"}})
+	out, err := AnalyzeWithOptions(bundleFromRecords([]Record{pod}), AnalyzeOptions{
+		OutputFormat:    "json",
+		HideResourceMix: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(out, `"resourceCounts"`) {
+		t.Error("resourceCounts should be omitted when HideResourceMix is true")
+	}
+}
+
+func TestAnalyze_JSONOutput_BelowThresholdMarkedFiltered(t *testing.T) {
+	out, err := AnalyzeWithOptions(bundleFromRecords([]Record{}), AnalyzeOptions{
+		OutputFormat: "json",
+		MinSeverity:  "medium",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var result AnalysisResult
+	if err := json.Unmarshal([]byte(out), &result); err != nil {
+		t.Fatal(err)
+	}
+	if !result.Filtered {
+		t.Error("expected filtered=true when below severity threshold")
+	}
+	if !strings.Contains(result.FilterReason, "MEDIUM") {
+		t.Errorf("expected filter reason to mention threshold, got: %q", result.FilterReason)
+	}
+}
+
+func TestAnalyze_JSONOutput_TextDefaultUnchanged(t *testing.T) {
+	pod := makePodRecord("default", "p", map[string]any{"status": map[string]any{"phase": "Failed"}})
+	out, err := AnalyzeWithOptions(bundleFromRecords([]Record{pod}), AnalyzeOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Should be text output (default), not JSON
+	if strings.HasPrefix(strings.TrimSpace(out), "{") {
+		t.Errorf("default output should be text, not JSON; got:\n%s", out)
+	}
+	if !strings.Contains(out, "Snapshot Incident Analysis") {
+		t.Error("expected text header in default output")
 	}
 }
 

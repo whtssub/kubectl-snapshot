@@ -2,6 +2,7 @@ package cli
 
 import (
 	"fmt"
+	"time"
 
 	"github.com/spf13/cobra"
 	"github.com/whtssub/kubectl-snapshot/internal/snapshot"
@@ -12,6 +13,8 @@ func newAnalyzeCommand() *cobra.Command {
 	var minSeverity string
 	var hideResourceMix bool
 	var hideWarningEvents bool
+	var outputFormat string
+	var since time.Duration
 
 	cmd := &cobra.Command{
 		Use:   "analyze <snapshot.json>",
@@ -28,6 +31,8 @@ func newAnalyzeCommand() *cobra.Command {
 				MinSeverity:       minSeverity,
 				HideResourceMix:   hideResourceMix,
 				HideWarningEvents: hideWarningEvents,
+				OutputFormat:      outputFormat,
+				Since:             since,
 			})
 			if err != nil {
 				return err
@@ -40,5 +45,7 @@ func newAnalyzeCommand() *cobra.Command {
 	cmd.Flags().StringVar(&minSeverity, "severity-threshold", "", "Only print details when severity is at least: low|medium|high")
 	cmd.Flags().BoolVar(&hideResourceMix, "no-resource-mix", false, "Hide resource mix section")
 	cmd.Flags().BoolVar(&hideWarningEvents, "no-warning-events", false, "Hide warning events section")
+	cmd.Flags().StringVar(&outputFormat, "output", "text", "Output format: text (default) or json")
+	cmd.Flags().DurationVar(&since, "since", 0, "Only include warning events from the last duration (e.g. 1h, 30m, 24h)")
 	return cmd
 }
