@@ -15,6 +15,7 @@ func newAnalyzeCommand() *cobra.Command {
 	var hideWarningEvents bool
 	var outputFormat string
 	var since time.Duration
+	var namespace string
 
 	cmd := &cobra.Command{
 		Use:   "analyze <snapshot.json>",
@@ -33,6 +34,7 @@ func newAnalyzeCommand() *cobra.Command {
 				HideWarningEvents: hideWarningEvents,
 				OutputFormat:      outputFormat,
 				Since:             since,
+				Namespace:         namespace,
 			})
 			if err != nil {
 				return err
@@ -47,5 +49,6 @@ func newAnalyzeCommand() *cobra.Command {
 	cmd.Flags().BoolVar(&hideWarningEvents, "no-warning-events", false, "Hide warning events section")
 	cmd.Flags().StringVar(&outputFormat, "output", "text", "Output format: text (default) or json")
 	cmd.Flags().DurationVar(&since, "since", 0, "Only include warning events from the last duration (e.g. 1h, 30m, 24h)")
+	cmd.Flags().StringVarP(&namespace, "namespace", "n", "", "Restrict analysis to a single namespace (cluster-scoped resources are always included)")
 	return cmd
 }

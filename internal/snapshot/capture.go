@@ -107,6 +107,10 @@ type CaptureOptions struct {
 	//   - a fully-qualified group/version/resource triple  ("apps/v1/deployments")
 	// When empty, all resources in allResources are captured (default behaviour).
 	Resources []string
+
+	// LabelSelector is an optional Kubernetes label selector string (e.g. "app=frontend").
+	// When non-empty it is forwarded to every list call so only matching objects are captured.
+	LabelSelector string
 }
 
 // resolveResources returns the set of ResourceDescriptors to capture based on opts.
@@ -186,7 +190,7 @@ func Capture(ctx context.Context, client dynamic.Interface, namespace string, cl
 
 	for _, rd := range descriptors {
 		gvr := rd.GVR
-		list, err := listResources(ctx, client, rd, namespace)
+		list, err := listResources(ctx, client, rd, namespace, opts.LabelSelector)
 		if err != nil {
 			if rd.Optional && (kerrors.IsNotFound(err) || kerrors.IsForbidden(err) || kerrors.IsMethodNotSupported(err)) {
 				skipped = append(skipped, gvrKey(gvr))
@@ -249,11 +253,12 @@ func Capture(ctx context.Context, client dynamic.Interface, namespace string, cl
 	}, nil
 }
 
-func listResources(ctx context.Context, client dynamic.Interface, rd ResourceDescriptor, namespace string) (*unstructured.UnstructuredList, error) {
+func listResources(ctx context.Context, client dynamic.Interface, rd ResourceDescriptor, namespace string, labelSelector string) (*unstructured.UnstructuredList, error) {
+	listOpts := metav1.ListOptions{LabelSelector: labelSelector}
 	if rd.ClusterScoped || namespace == "" {
-		return client.Resource(rd.GVR).List(ctx, metav1.ListOptions{})
+		return client.Resource(rd.GVR).List(ctx, listOpts)
 	}
-	return client.Resource(rd.GVR).Namespace(namespace).List(ctx, metav1.ListOptions{})
+	return client.Resource(rd.GVR).Namespace(namespace).List(ctx, listOpts)
 }
 
 // gvrKey returns a human-readable key for a GVR, e.g. "apps/v1/deployments".

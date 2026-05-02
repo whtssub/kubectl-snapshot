@@ -85,6 +85,16 @@ func ReadBundle(path string) (*Bundle, error) {
 	return &bundle, nil
 }
 
+// StatBundle returns the byte size of the file at path. Used when recording
+// an entry in the history index.
+func StatBundle(path string) (int64, error) {
+	fi, err := os.Stat(path)
+	if err != nil {
+		return 0, err
+	}
+	return fi.Size(), nil
+}
+
 func isGzip(data []byte) bool {
 	return len(data) >= 2 && bytes.Equal(data[:2], gzipMagic)
 }

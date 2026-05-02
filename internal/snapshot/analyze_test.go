@@ -1681,3 +1681,81 @@ func TestAnalyze_StorageIssuesSection_AlwaysPresent(t *testing.T) {
 		t.Error("STORAGE ISSUES section should always be present")
 	}
 }
+
+// --- --namespace filter ---
+
+func TestAnalyze_NamespaceFilter_ExcludesOtherNamespaces(t *testing.T) {
+	records := []Record{
+		makePodRecord("prod", "good-pod", map[string]any{
+			"status": map[string]any{"phase": "Running"},
+		}),
+		makePodRecord("staging", "bad-pod", map[string]any{
+			"status": map[string]any{"phase": "Failed"},
+		}),
+	}
+	out, err := AnalyzeWithOptions(bundleFromRecords(records), AnalyzeOptions{Namespace: "prod"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(out, "staging/bad-pod") {
+		t.Error("staging pod should be excluded when namespace=prod")
+	}
+}
+
+func TestAnalyze_NamespaceFilter_IncludesTargetNamespace(t *testing.T) {
+	records := []Record{
+		makePodRecord("prod", "bad-pod", map[string]any{
+			"status": map[string]any{"phase": "Failed"},
+		}),
+		makePodRecord("staging", "other-bad", map[string]any{
+			"status": map[string]any{"phase": "Failed"},
+		}),
+	}
+	out, err := AnalyzeWithOptions(bundleFromRecords(records), AnalyzeOptions{Namespace: "prod"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out, "prod/bad-pod") {
+		t.Error("prod pod should be included when namespace=prod")
+	}
+}
+
+func TestAnalyze_NamespaceFilter_AlwaysIncludesClusterScopedRecords(t *testing.T) {
+	records := []Record{
+		makeNodeRecord("node-1", map[string]any{
+			"status": map[string]any{
+				"conditions": []any{
+					map[string]any{"type": "MemoryPressure", "status": "True", "reason": "KubeletHasSufficientMemory"},
+				},
+			},
+		}),
+		makePodRecord("staging", "pod-1", map[string]any{
+			"status": map[string]any{"phase": "Failed"},
+		}),
+	}
+	out, err := AnalyzeWithOptions(bundleFromRecords(records), AnalyzeOptions{Namespace: "prod"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Cluster-scoped node should appear; staging pod should not
+	if !strings.Contains(out, "node-1") {
+		t.Error("cluster-scoped node-1 should be included regardless of namespace filter")
+	}
+	if strings.Contains(out, "staging/pod-1") {
+		t.Error("staging pod should be excluded when namespace=prod")
+	}
+}
+
+func TestAnalyze_NamespaceFilter_EmptyNamespace_IncludesAll(t *testing.T) {
+	records := []Record{
+		makePodRecord("prod", "pod-a", map[string]any{"status": map[string]any{"phase": "Failed"}}),
+		makePodRecord("staging", "pod-b", map[string]any{"status": map[string]any{"phase": "Failed"}}),
+	}
+	out, err := AnalyzeWithOptions(bundleFromRecords(records), AnalyzeOptions{Namespace: ""})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out, "prod/pod-a") || !strings.Contains(out, "staging/pod-b") {
+		t.Error("empty namespace filter should include all records")
+	}
+}

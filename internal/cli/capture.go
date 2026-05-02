@@ -3,6 +3,7 @@ package cli
 import (
 	"context"
 	"fmt"
+	"path/filepath"
 
 	"github.com/spf13/cobra"
 	"github.com/whtssub/kubectl-snapshot/internal/snapshot"
@@ -14,6 +15,9 @@ func newCaptureCommand() *cobra.Command {
 	var outputPath string
 	var resources []string
 	var compress string
+	var labelSelector string
+	var indexPath string
+	var noIndex bool
 
 	cmd := &cobra.Command{
 		Use:   "capture",
@@ -37,7 +41,7 @@ the capture to specific types:
 				return err
 			}
 
-			opts := snapshot.CaptureOptions{Resources: resources}
+			opts := snapshot.CaptureOptions{Resources: resources, LabelSelector: labelSelector}
 
 			ctx := context.Background()
 			bundle, err := snapshot.Capture(ctx, client, namespace, cfg.CurrentContext, opts)
@@ -56,6 +60,36 @@ the capture to specific types:
 			if len(bundle.Metadata.SkippedResources) > 0 {
 				cmd.Printf("skipped: %v\n", bundle.Metadata.SkippedResources)
 			}
+
+			if !noIndex {
+				idxPath := indexPath
+				if idxPath == "" {
+					idxPath, err = snapshot.DefaultIndexPath()
+					if err != nil {
+						cmd.Printf("warning: could not resolve history index path: %v\n", err)
+						return nil
+					}
+				}
+				absOutput, absErr := filepath.Abs(outputPath)
+				if absErr != nil {
+					absOutput = outputPath
+				}
+				fi, statErr := snapshot.StatBundle(outputPath)
+				var sizeBytes int64
+				if statErr == nil {
+					sizeBytes = fi
+				}
+				indexErr := snapshot.AddToIndex(idxPath, snapshot.HistoryEntry{
+					Path:         absOutput,
+					CapturedAt:   bundle.Metadata.CapturedAt,
+					Cluster:      bundle.Metadata.ClusterHint,
+					TotalRecords: len(bundle.Records),
+					SizeBytes:    sizeBytes,
+				})
+				if indexErr != nil {
+					cmd.Printf("warning: could not update history index: %v\n", indexErr)
+				}
+			}
 			return nil
 		},
 	}
@@ -68,5 +102,8 @@ the capture to specific types:
 			"Accepts short names (pods,deploy,cm), plural names, or\n"+
 			"group/version/resource triples (myapp.io/v1/widgets).")
 	cmd.Flags().StringVar(&compress, "compress", "", "Compress output bundle: gzip")
+	cmd.Flags().StringVarP(&labelSelector, "selector", "l", "", "Label selector to filter captured resources (e.g. app=frontend)")
+	cmd.Flags().StringVar(&indexPath, "index", "", "Path to history index file (default: ~/.kubectl-snapshot/history.json)")
+	cmd.Flags().BoolVar(&noIndex, "no-index", false, "Skip adding this snapshot to the local history index")
 	return cmd
 }

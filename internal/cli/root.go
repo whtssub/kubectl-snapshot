@@ -28,6 +28,8 @@ func NewRootCommand(version, commit, date string) *cobra.Command {
 	cmd.AddCommand(newDiffCommand())
 	cmd.AddCommand(newAnalyzeCommand())
 	cmd.AddCommand(newVersionCommand(version, commit, date))
+	cmd.AddCommand(newHistoryCommand())
+	cmd.AddCommand(newTrendCommand())
 
 	cmd.Flags().BoolVarP(new(bool), "version", "v", false, "print version and exit")
 

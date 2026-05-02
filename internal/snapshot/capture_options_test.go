@@ -262,3 +262,19 @@ func TestShortNames_CommonAliasesPresent(t *testing.T) {
 		}
 	}
 }
+
+// --- LabelSelector field ---
+
+func TestCaptureOptions_LabelSelector_Preserved(t *testing.T) {
+	opts := CaptureOptions{LabelSelector: "app=frontend"}
+	if opts.LabelSelector != "app=frontend" {
+		t.Errorf("expected label selector to be preserved, got %q", opts.LabelSelector)
+	}
+}
+
+func TestCaptureOptions_LabelSelector_EmptyByDefault(t *testing.T) {
+	opts := CaptureOptions{}
+	if opts.LabelSelector != "" {
+		t.Errorf("expected empty label selector by default, got %q", opts.LabelSelector)
+	}
+}
