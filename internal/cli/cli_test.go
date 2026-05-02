@@ -220,3 +220,71 @@ func TestAnalyzeCommand_MaxItemsFlag_Accepted(t *testing.T) {
 		t.Fatalf("--max-items flag rejected: %v", err)
 	}
 }
+
+func TestAnalyzeCommand_NamespaceFlag_Accepted(t *testing.T) {
+	path := writeTempBundle(t, nil)
+	_, err := runCmd(t, "analyze", "--namespace=prod", path)
+	if err != nil {
+		t.Fatalf("--namespace flag rejected: %v", err)
+	}
+}
+
+func TestAnalyzeCommand_NamespaceFlag_FiltersOutput(t *testing.T) {
+	path := writeTempBundle(t, []snapshot.Record{
+		{Version: "v1", Resource: "pods", Namespace: "prod", Name: "prod-pod",
+			Object: map[string]any{"status": map[string]any{"phase": "Failed"}}},
+		{Version: "v1", Resource: "pods", Namespace: "staging", Name: "staging-pod",
+			Object: map[string]any{"status": map[string]any{"phase": "Failed"}}},
+	})
+	out, err := runCmd(t, "analyze", "--namespace=prod", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(out, "staging/staging-pod") {
+		t.Error("namespace filter should exclude staging pod")
+	}
+	if !strings.Contains(out, "prod/prod-pod") {
+		t.Error("namespace filter should include prod pod")
+	}
+}
+
+// --- history ---
+
+func TestHistoryCommand_EmptyIndex_PrintsNoSnapshots(t *testing.T) {
+	dir := t.TempDir()
+	idxPath := dir + "/history.json"
+	out, err := runCmd(t, "history", "--index="+idxPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out, "no snapshots") {
+		t.Errorf("expected 'no snapshots' message, got: %q", out)
+	}
+}
+
+func TestHistoryCommand_WithEntries_PrintsTable(t *testing.T) {
+	dir := t.TempDir()
+	idxPath := dir + "/history.json"
+
+	// Seed the index directly
+	idx := &snapshot.HistoryIndex{
+		Entries: []snapshot.HistoryEntry{
+			{Path: "/tmp/snap1.json", CapturedAt: time.Now(), Cluster: "prod", TotalRecords: 10},
+			{Path: "/tmp/snap2.json", CapturedAt: time.Now(), Cluster: "staging", TotalRecords: 20},
+		},
+	}
+	if err := snapshot.SaveIndex(idxPath, idx); err != nil {
+		t.Fatal(err)
+	}
+
+	out, err := runCmd(t, "history", "--index="+idxPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out, "snap1.json") {
+		t.Errorf("expected snap1.json in history output, got: %q", out)
+	}
+	if !strings.Contains(out, "snap2.json") {
+		t.Errorf("expected snap2.json in history output, got: %q", out)
+	}
+}
