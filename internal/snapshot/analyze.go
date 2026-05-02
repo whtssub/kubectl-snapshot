@@ -64,6 +64,7 @@ type AnalyzeOptions struct {
 	HideWarningEvents bool
 	OutputFormat      string        // "text" (default) or "json"
 	Since             time.Duration // when >0, drop events older than (CapturedAt - Since)
+	Namespace         string        // when non-empty, only analyse records in this namespace (cluster-scoped records are always included)
 }
 
 func AnalyzeWithOptions(bundle *Bundle, opts AnalyzeOptions) (string, error) {
@@ -88,9 +89,22 @@ func AnalyzeWithOptions(bundle *Bundle, opts AnalyzeOptions) (string, error) {
 		a.eventCutoff = bundle.Metadata.CapturedAt.Add(-opts.Since)
 	}
 
+	// Apply namespace filter: keep cluster-scoped records (Namespace=="") and
+	// records whose namespace matches opts.Namespace.
+	records := bundle.Records
+	if opts.Namespace != "" {
+		filtered := make([]Record, 0, len(records))
+		for _, r := range records {
+			if r.Namespace == "" || r.Namespace == opts.Namespace {
+				filtered = append(filtered, r)
+			}
+		}
+		records = filtered
+	}
+
 	// Pre-pass: build cross-reference indexes used by inspectors that need
 	// to look across record types (e.g. ingress→service, pod→networkpolicy).
-	for _, r := range bundle.Records {
+	for _, r := range records {
 		obj, ok := r.Object.(map[string]any)
 		if !ok {
 			continue
@@ -113,7 +127,7 @@ func AnalyzeWithOptions(bundle *Bundle, opts AnalyzeOptions) (string, error) {
 		}
 	}
 
-	for _, r := range bundle.Records {
+	for _, r := range records {
 		a.resourceCounts[r.Resource]++
 		obj, ok := r.Object.(map[string]any)
 		if !ok {
@@ -167,7 +181,7 @@ func AnalyzeWithOptions(bundle *Bundle, opts AnalyzeOptions) (string, error) {
 	)
 
 	if strings.ToLower(strings.TrimSpace(opts.OutputFormat)) == "json" {
-		return renderJSON(bundle, a, score, severity, opts)
+		return renderJSON(bundle, a, score, severity, len(records), opts)
 	}
 
 	var sb strings.Builder
@@ -177,7 +191,7 @@ func AnalyzeWithOptions(bundle *Bundle, opts AnalyzeOptions) (string, error) {
 	sb.WriteByte('\n')
 	sb.WriteString(fmt.Sprintf("Captured at:        %s\n", bundle.Metadata.CapturedAt.Format("2006-01-02 15:04:05 MST")))
 	sb.WriteString(fmt.Sprintf("Cluster context:    %s\n", defaultIfEmpty(bundle.Metadata.ClusterHint, "(unknown)")))
-	sb.WriteString(fmt.Sprintf("Total records:      %d\n", len(bundle.Records)))
+	sb.WriteString(fmt.Sprintf("Total records:      %d\n", len(records)))
 	sb.WriteString(fmt.Sprintf("Total restarts:     %d\n", a.totalRestarts))
 	sb.WriteString(fmt.Sprintf("Warning events:     %d\n", len(a.warningEvents)))
 	sb.WriteString(fmt.Sprintf("Non-normal events:  %d\n\n", a.unknownEventLevels))
@@ -211,12 +225,12 @@ func AnalyzeWithOptions(bundle *Bundle, opts AnalyzeOptions) (string, error) {
 	return sb.String(), nil
 }
 
-func renderJSON(bundle *Bundle, a *analysis, score int, severity string, opts AnalyzeOptions) (string, error) {
+func renderJSON(bundle *Bundle, a *analysis, score int, severity string, totalRecords int, opts AnalyzeOptions) (string, error) {
 	result := AnalysisResult{
 		Metadata: AnalysisMetadata{
 			CapturedAt:        bundle.Metadata.CapturedAt,
 			ClusterContext:    bundle.Metadata.ClusterHint,
-			TotalRecords:      len(bundle.Records),
+			TotalRecords:      totalRecords,
 			TotalRestarts:     a.totalRestarts,
 			WarningEventCount: len(a.warningEvents),
 			NonNormalEvents:   a.unknownEventLevels,
