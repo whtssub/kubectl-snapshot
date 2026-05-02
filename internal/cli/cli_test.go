@@ -288,3 +288,59 @@ func TestHistoryCommand_WithEntries_PrintsTable(t *testing.T) {
 		t.Errorf("expected snap2.json in history output, got: %q", out)
 	}
 }
+
+// --- trend ---
+
+func TestTrendCommand_NoArgs_EmptyIndex_ReturnsError(t *testing.T) {
+	dir := t.TempDir()
+	idxPath := dir + "/history.json"
+	_, err := runCmd(t, "trend", "--index="+idxPath)
+	if err == nil {
+		t.Error("expected error when history index is empty and no args given")
+	}
+}
+
+func TestTrendCommand_OneSnapshot_ReturnsError(t *testing.T) {
+	path := writeTempBundle(t, nil)
+	_, err := runCmd(t, "trend", path)
+	if err == nil {
+		t.Error("expected error with only one snapshot")
+	}
+}
+
+func TestTrendCommand_TwoSnapshots_ProducesReport(t *testing.T) {
+	snap1 := writeTempBundle(t, nil)
+	snap2 := writeTempBundle(t, nil)
+	out, err := runCmd(t, "trend", snap1, snap2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out, "Snapshot Trend") {
+		t.Errorf("expected trend report header, got: %q", out)
+	}
+}
+
+func TestTrendCommand_FromHistoryIndex_ProducesReport(t *testing.T) {
+	snap1 := writeTempBundle(t, nil)
+	snap2 := writeTempBundle(t, nil)
+	dir := t.TempDir()
+	idxPath := dir + "/history.json"
+
+	idx := &snapshot.HistoryIndex{
+		Entries: []snapshot.HistoryEntry{
+			{Path: snap1, CapturedAt: time.Now(), Cluster: "prod", TotalRecords: 5},
+			{Path: snap2, CapturedAt: time.Now(), Cluster: "prod", TotalRecords: 5},
+		},
+	}
+	if err := snapshot.SaveIndex(idxPath, idx); err != nil {
+		t.Fatal(err)
+	}
+
+	out, err := runCmd(t, "trend", "--index="+idxPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out, "Snapshot Trend") {
+		t.Errorf("expected trend report header, got: %q", out)
+	}
+}
