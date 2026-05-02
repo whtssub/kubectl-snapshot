@@ -14,6 +14,7 @@ func newCaptureCommand() *cobra.Command {
 	var outputPath string
 	var resources []string
 	var compress string
+	var labelSelector string
 
 	cmd := &cobra.Command{
 		Use:   "capture",
@@ -37,7 +38,7 @@ the capture to specific types:
 				return err
 			}
 
-			opts := snapshot.CaptureOptions{Resources: resources}
+			opts := snapshot.CaptureOptions{Resources: resources, LabelSelector: labelSelector}
 
 			ctx := context.Background()
 			bundle, err := snapshot.Capture(ctx, client, namespace, cfg.CurrentContext, opts)
@@ -68,5 +69,6 @@ the capture to specific types:
 			"Accepts short names (pods,deploy,cm), plural names, or\n"+
 			"group/version/resource triples (myapp.io/v1/widgets).")
 	cmd.Flags().StringVar(&compress, "compress", "", "Compress output bundle: gzip")
+	cmd.Flags().StringVarP(&labelSelector, "selector", "l", "", "Label selector to filter captured resources (e.g. app=frontend)")
 	return cmd
 }
