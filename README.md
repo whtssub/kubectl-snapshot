@@ -27,31 +27,80 @@ A `kubectl` plugin that captures point-in-time snapshots of Kubernetes cluster s
 | `capture` | Serialises 24 resource types into a portable JSON bundle |
 | `diff` | Compares two bundles — shows what was added, removed, or changed |
 | `analyze` | Inspects a bundle for incident signals with a severity-scored report |
+| `history` | Lists previously captured snapshots from the local index |
+| `trend` | Compares pod counts, restarts, and warning events across N snapshots |
+| `completion` | Generates shell completion scripts for bash / zsh / fish / PowerShell |
 
 ---
 
 ## Install
 
-### From a release binary (recommended)
+### krew (recommended)
+
+```bash
+kubectl krew install snapshot
+kubectl snapshot version
+```
+
+### Homebrew
+
+```bash
+brew install whtssub/tap/kubectl-snapshot
+```
+
+### From a release binary
 
 Download the archive for your platform from the [Releases](https://github.com/whtssub/kubectl-snapshot/releases) page, extract it, and place the binary on your `PATH`.
 
 ```bash
 # macOS arm64
-tar -xzf kubectl-snapshot_v0.2.0_darwin_arm64.tar.gz
+curl -L https://github.com/whtssub/kubectl-snapshot/releases/latest/download/kubectl-snapshot_Darwin_arm64.tar.gz | tar xz
 mv kubectl-snapshot ~/.local/bin/
 
 # Linux amd64
-tar -xzf kubectl-snapshot_v0.2.0_linux_amd64.tar.gz
+curl -L https://github.com/whtssub/kubectl-snapshot/releases/latest/download/kubectl-snapshot_Linux_x86_64.tar.gz | tar xz
 mv kubectl-snapshot ~/.local/bin/
 ```
 
 `kubectl` discovers it automatically because the binary is named `kubectl-snapshot`.
 
+#### Verifying checksums
+
+Every release ships a `checksums.txt` file. Verify your download before using it:
+
+```bash
+# Download the binary and checksums
+curl -LO https://github.com/whtssub/kubectl-snapshot/releases/latest/download/kubectl-snapshot_Linux_x86_64.tar.gz
+curl -LO https://github.com/whtssub/kubectl-snapshot/releases/latest/download/checksums.txt
+
+# Verify (sha256sum on Linux, shasum -a 256 on macOS)
+sha256sum --check --ignore-missing checksums.txt
+# or on macOS:
+shasum -a 256 --check --ignore-missing checksums.txt
+```
+
 ### From source (Go 1.22+)
 
 ```bash
 go install github.com/whtssub/kubectl-snapshot/cmd/kubectl-snapshot@latest
+```
+
+### Shell completion
+
+Enable tab-completion for your shell after installing:
+
+```bash
+# bash (~/.bashrc)
+source <(kubectl snapshot completion bash)
+
+# zsh (~/.zshrc)
+source <(kubectl snapshot completion zsh)
+
+# fish (~/.config/fish/config.fish)
+kubectl snapshot completion fish | source
+
+# PowerShell ($PROFILE)
+kubectl snapshot completion powershell | Out-String | Invoke-Expression
 ```
 
 ---
@@ -70,6 +119,10 @@ kubectl snapshot capture -n production -o snap.json
 # Specific resource types (short names, plural names, or group/version/resource)
 kubectl snapshot capture --resources pods,deploy,pvc -o snap.json
 kubectl snapshot capture --resources myapp.io/v1/widgets -o snap.json
+
+# Scope to a label selector
+kubectl snapshot capture --selector app=frontend -o snap-frontend.json
+kubectl snapshot capture -l env=prod -o snap-prod.json
 
 # Compressed output (~75% smaller for large clusters)
 kubectl snapshot capture --compress gzip -o snap.json.gz
@@ -114,6 +167,15 @@ Net delta:      +33
 kubectl snapshot analyze snap.json
 kubectl snapshot analyze snap.json --severity-threshold medium
 kubectl snapshot analyze snap.json --no-resource-mix --no-warning-events
+
+# Restrict to one namespace (nodes and other cluster-scoped resources still included)
+kubectl snapshot analyze snap.json --namespace production
+
+# Machine-readable output for piping into alerting tools
+kubectl snapshot analyze snap.json --output json | jq '.incident'
+
+# SARIF output for GitHub Code Scanning
+kubectl snapshot analyze snap.json --output sarif > results.sarif
 ```
 
 ```
@@ -165,6 +227,28 @@ Non-normal events:  0
 ⚠️  WARNING EVENTS
 ─────────────────────────────────
    1. sre-lab/api.1a2b3c reason=BackOff msg="back-off restarting failed container app..."
+```
+
+### History
+
+Every `capture` automatically adds an entry to `~/.kubectl-snapshot/history.json`.
+
+```bash
+# List all captured snapshots (newest first)
+kubectl snapshot history
+
+# Use a custom index path
+kubectl snapshot history --index /shared/snapshots/history.json
+```
+
+### Trend
+
+```bash
+# Compare two specific snapshots
+kubectl snapshot trend before.json after.json
+
+# Compare the last 5 captures from the history index
+kubectl snapshot trend --last 5
 ```
 
 > **Color output** is enabled by default. Set `NO_COLOR=1` to disable.
@@ -221,15 +305,25 @@ Restart count is **capped at 50** before scoring — a pod with 1 000 restarts w
 | Command | Flag | Description |
 |---------|------|-------------|
 | `capture` | `--output`, `-o` | Output file path (required) |
-| `capture` | `--namespace`, `-n` | Limit to one namespace (default: all) |
-| `capture` | `--kubeconfig` | Path to kubeconfig file |
-| `capture` | `--resources` | Comma-separated list of resource types to capture |
+| `capture` | `--namespace`, `-n` | Limit capture to one namespace (default: all) |
+| `capture` | `--selector`, `-l` | Label selector to filter resources (e.g. `app=frontend`) |
+| `capture` | `--resources` | Comma-separated resource types to capture (default: all) |
 | `capture` | `--compress` | Compress output: `gzip` |
+| `capture` | `--kubeconfig` | Path to kubeconfig file |
+| `capture` | `--no-index` | Skip adding this snapshot to the local history index |
+| `capture` | `--index` | Custom history index path (default: `~/.kubectl-snapshot/history.json`) |
 | `diff` | `--max-items` | Max entries per section (default: 15) |
 | `analyze` | `--max-items` | Max entries per section (default: 15) |
+| `analyze` | `--namespace`, `-n` | Restrict analysis to one namespace (cluster-scoped records always included) |
 | `analyze` | `--severity-threshold` | Suppress output below this level: `low`, `medium`, `high` |
 | `analyze` | `--no-resource-mix` | Hide resource mix section |
 | `analyze` | `--no-warning-events` | Hide warning events section |
+| `analyze` | `--output` | Output format: `text` (default), `json`, or `sarif` |
+| `analyze` | `--since` | Only include warning events from the last duration (e.g. `1h`, `30m`) |
+| `history` | `--index` | Custom history index path (default: `~/.kubectl-snapshot/history.json`) |
+| `trend` | `--last` | Number of recent history snapshots to compare (default: 5) |
+| `trend` | `--index` | Custom history index path (default: `~/.kubectl-snapshot/history.json`) |
+| `completion` | _(positional)_ | Shell name: `bash`, `zsh`, `fish`, or `powershell` |
 
 ---
 

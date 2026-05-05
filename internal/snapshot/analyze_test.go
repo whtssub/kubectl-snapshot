@@ -1759,3 +1759,108 @@ func TestAnalyze_NamespaceFilter_EmptyNamespace_IncludesAll(t *testing.T) {
 		t.Error("empty namespace filter should include all records")
 	}
 }
+
+// --- SARIF output ---
+
+func TestAnalyze_SARIFOutput_ValidJSON(t *testing.T) {
+	records := []Record{
+		makePodRecord("sre-lab", "crasher", map[string]any{
+			"status": map[string]any{
+				"phase": "Running",
+				"containerStatuses": []any{
+					map[string]any{
+						"name":         "app",
+						"restartCount": float64(3),
+						"state": map[string]any{
+							"waiting": map[string]any{
+								"reason":  "CrashLoopBackOff",
+								"message": "back-off restarting",
+							},
+						},
+					},
+				},
+			},
+		}),
+	}
+	out, err := AnalyzeWithOptions(bundleFromRecords(records), AnalyzeOptions{OutputFormat: "sarif"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var parsed map[string]any
+	if err := json.Unmarshal([]byte(out), &parsed); err != nil {
+		t.Fatalf("SARIF output is not valid JSON: %v\noutput: %s", err, out)
+	}
+}
+
+func TestAnalyze_SARIFOutput_ContainsSchemaVersion(t *testing.T) {
+	out, err := AnalyzeWithOptions(bundleFromRecords(nil), AnalyzeOptions{OutputFormat: "sarif"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out, "2.1.0") {
+		t.Errorf("expected SARIF version 2.1.0 in output, got: %q", out[:min(len(out), 300)])
+	}
+}
+
+func TestAnalyze_SARIFOutput_ContainsRules(t *testing.T) {
+	out, err := AnalyzeWithOptions(bundleFromRecords(nil), AnalyzeOptions{OutputFormat: "sarif"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out, "snapshot/pod-issue") {
+		t.Errorf("expected SARIF rules in output, got: %q", out[:min(len(out), 300)])
+	}
+}
+
+func TestAnalyze_SARIFOutput_PodIssue_AppearsAsResult(t *testing.T) {
+	records := []Record{
+		makePodRecord("default", "bad-pod", map[string]any{
+			"status": map[string]any{"phase": "Failed"},
+		}),
+	}
+	out, err := AnalyzeWithOptions(bundleFromRecords(records), AnalyzeOptions{OutputFormat: "sarif"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out, "snapshot/pod-issue") {
+		t.Errorf("expected pod-issue rule in SARIF results, got: %q", out)
+	}
+	if !strings.Contains(out, "default/bad-pod") {
+		t.Errorf("expected pod name in SARIF result message, got: %q", out)
+	}
+}
+
+func TestAnalyze_SARIFOutput_EmptyBundle_HasEmptyResults(t *testing.T) {
+	out, err := AnalyzeWithOptions(bundleFromRecords(nil), AnalyzeOptions{OutputFormat: "sarif"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out, `"results": []`) {
+		t.Errorf("expected empty results array, got: %q", out[:min(len(out), 400)])
+	}
+}
+
+func TestExtractResourceFromIssue(t *testing.T) {
+	tests := []struct {
+		input string
+		want  string
+	}{
+		{"[CRASHLOOP] sre-lab/api container=app", "sre-lab/api"},
+		{"default/bad-pod phase=Failed", "default/bad-pod"},
+		{"node-1 MemoryPressure=True reason=KubeletHasInsufficientMemory", "node-1"},
+		{"", ""},
+	}
+	for _, tc := range tests {
+		got := extractResourceFromIssue(tc.input)
+		if got != tc.want {
+			t.Errorf("extractResourceFromIssue(%q) = %q, want %q", tc.input, got, tc.want)
+		}
+	}
+}
+
+func min(a, b int) int {
+	if a < b {
+		return a
+	}
+	return b
+}

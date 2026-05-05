@@ -62,7 +62,7 @@ type AnalyzeOptions struct {
 	MinSeverity       string
 	HideResourceMix   bool
 	HideWarningEvents bool
-	OutputFormat      string        // "text" (default) or "json"
+	OutputFormat      string        // "text" (default), "json", or "sarif"
 	Since             time.Duration // when >0, drop events older than (CapturedAt - Since)
 	Namespace         string        // when non-empty, only analyse records in this namespace (cluster-scoped records are always included)
 }
@@ -180,8 +180,11 @@ func AnalyzeWithOptions(bundle *Bundle, opts AnalyzeOptions) (string, error) {
 		cappedRestarts, len(a.workloadIssues), len(a.storageIssues),
 	)
 
-	if strings.ToLower(strings.TrimSpace(opts.OutputFormat)) == "json" {
+	switch strings.ToLower(strings.TrimSpace(opts.OutputFormat)) {
+	case "json":
 		return renderJSON(bundle, a, score, severity, len(records), opts)
+	case "sarif":
+		return renderSARIF(bundle, a, severity, opts)
 	}
 
 	var sb strings.Builder

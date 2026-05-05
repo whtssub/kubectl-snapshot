@@ -52,6 +52,60 @@ func runCmd(t *testing.T, args ...string) (string, error) {
 	return out.String(), err
 }
 
+// --- completion ---
+
+func TestCompletionCommand_Bash_ProducesOutput(t *testing.T) {
+	out, err := runCmd(t, "completion", "bash")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out, "bash") {
+		t.Errorf("bash completion output looks empty or wrong: %q", out[:min(len(out), 200)])
+	}
+}
+
+func TestCompletionCommand_Zsh_ProducesOutput(t *testing.T) {
+	out, err := runCmd(t, "completion", "zsh")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(out) == 0 {
+		t.Error("zsh completion output is empty")
+	}
+}
+
+func TestCompletionCommand_Fish_ProducesOutput(t *testing.T) {
+	out, err := runCmd(t, "completion", "fish")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(out) == 0 {
+		t.Error("fish completion output is empty")
+	}
+}
+
+func TestCompletionCommand_InvalidShell_ReturnsError(t *testing.T) {
+	_, err := runCmd(t, "completion", "tcsh")
+	if err == nil {
+		t.Error("expected error for unsupported shell")
+	}
+}
+
+func TestCompletionCommand_NoArg_ReturnsError(t *testing.T) {
+	_, err := runCmd(t, "completion")
+	if err == nil {
+		t.Error("expected error when no shell argument given")
+	}
+}
+
+// min is available from Go 1.21 builtins, but define for older test compat.
+func min(a, b int) int {
+	if a < b {
+		return a
+	}
+	return b
+}
+
 // --- version ---
 
 func TestVersionCommand_PrintsVPrefix(t *testing.T) {
