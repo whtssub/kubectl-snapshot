@@ -47,7 +47,7 @@ func newAnalyzeCommand() *cobra.Command {
 	cmd.Flags().StringVar(&minSeverity, "severity-threshold", "", "Only print details when severity is at least: low|medium|high")
 	cmd.Flags().BoolVar(&hideResourceMix, "no-resource-mix", false, "Hide resource mix section")
 	cmd.Flags().BoolVar(&hideWarningEvents, "no-warning-events", false, "Hide warning events section")
-	cmd.Flags().StringVar(&outputFormat, "output", "text", "Output format: text (default) or json")
+	cmd.Flags().StringVar(&outputFormat, "output", "text", "Output format: text (default), json, or sarif")
 	cmd.Flags().DurationVar(&since, "since", 0, "Only include warning events from the last duration (e.g. 1h, 30m, 24h)")
 	cmd.Flags().StringVarP(&namespace, "namespace", "n", "", "Restrict analysis to a single namespace (cluster-scoped resources are always included)")
 	return cmd
