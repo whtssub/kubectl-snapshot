@@ -35,20 +35,7 @@ A `kubectl` plugin that captures point-in-time snapshots of Kubernetes cluster s
 
 ## Install
 
-### krew (recommended)
-
-```bash
-kubectl krew install snapshot
-kubectl snapshot version
-```
-
-### Homebrew
-
-```bash
-brew install whtssub/tap/kubectl-snapshot
-```
-
-### From a release binary
+### From a release binary (recommended)
 
 Download the archive for your platform from the [Releases](https://github.com/whtssub/kubectl-snapshot/releases) page, extract it, and place the binary on your `PATH`.
 
