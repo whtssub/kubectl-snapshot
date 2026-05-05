@@ -30,7 +30,4 @@ jobs:
           version: latest
           args: release --clean
         env:
-          # GH_PAT is a Personal Access Token with `contents:write` on
-          # whtssub/krew-index and whtssub/homebrew-tap. Falls back to the
-          # default GITHUB_TOKEN (which can only publish to this repo).
-          GITHUB_TOKEN: ${{ secrets.GH_PAT || secrets.GITHUB_TOKEN }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
