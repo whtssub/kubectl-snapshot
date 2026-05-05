@@ -62,4 +62,19 @@ krews:
       them for post-incident analysis. Detects pod failures, node pressure,
       deployment rollout issues, storage problems, and HPA ceiling hits.
     short_description: Capture and diff K8s cluster snapshots for incident review
-    skip_upload: true
+
+brews:
+  - name: kubectl-snapshot
+    repository:
+      owner: whtssub
+      name: homebrew-tap
+    commit_author:
+      name: whtssub
+      email: chikki81166@gmail.com
+    homepage: https://github.com/whtssub/kubectl-snapshot
+    description: Capture and diff K8s cluster snapshots for incident review
+    license: Apache-2.0
+    install: |
+      bin.install "kubectl-snapshot"
+    test: |
+      system "#{bin}/kubectl-snapshot", "version"
