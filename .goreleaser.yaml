@@ -62,6 +62,7 @@ krews:
       them for post-incident analysis. Detects pod failures, node pressure,
       deployment rollout issues, storage problems, and HPA ceiling hits.
     short_description: Capture and diff K8s cluster snapshots for incident review
+    skip_upload: true
 
 brews:
   - name: kubectl-snapshot
@@ -78,3 +79,4 @@ brews:
       bin.install "kubectl-snapshot"
     test: |
       system "#{bin}/kubectl-snapshot", "version"
+    skip_upload: true
