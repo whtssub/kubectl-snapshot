@@ -30,6 +30,7 @@ func NewRootCommand(version, commit, date string) *cobra.Command {
 	cmd.AddCommand(newVersionCommand(version, commit, date))
 	cmd.AddCommand(newHistoryCommand())
 	cmd.AddCommand(newTrendCommand())
+	cmd.AddCommand(newCompletionCommand(cmd))
 
 	cmd.Flags().BoolVarP(new(bool), "version", "v", false, "print version and exit")
 
